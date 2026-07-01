@@ -21,9 +21,13 @@ import {
 } from "../types/retell.js";
 import { getEnv } from "../services/env.js";
 
+function opt(value: string | null | undefined): string | undefined {
+  return value ?? undefined;
+}
+
 async function logToolCall(params: {
   toolName: string;
-  sessionId?: string;
+  sessionId?: string | null;
   status: string;
   request: unknown;
   response: unknown;
@@ -160,7 +164,7 @@ export function createMcpServer(): McpServer {
         };
         await logToolCall({
           toolName: "book_tour",
-          sessionId: parsed.sessionId,
+          sessionId: opt(parsed.sessionId),
           status: "error",
           request: parsed,
           response,
@@ -179,7 +183,7 @@ export function createMcpServer(): McpServer {
         };
         await logToolCall({
           toolName: "book_tour",
-          sessionId: parsed.sessionId,
+          sessionId: opt(parsed.sessionId),
           status: "error",
           request: parsed,
           response,
@@ -203,26 +207,26 @@ export function createMcpServer(): McpServer {
           durationMinutes: parsed.durationMinutes,
           timezone: parsed.timezone,
           email: parsed.email,
-          firstName: parsed.firstName,
-          lastName: parsed.lastName,
-          phone: parsed.phone,
-          hubspotContactId: parsed.hubspotContactId,
-          hubspotDealId: parsed.hubspotDealId,
-          sessionId: parsed.sessionId,
+          firstName: opt(parsed.firstName),
+          lastName: opt(parsed.lastName),
+          phone: opt(parsed.phone),
+          hubspotContactId: opt(parsed.hubspotContactId),
+          hubspotDealId: opt(parsed.hubspotDealId),
+          sessionId: opt(parsed.sessionId),
         });
 
         const bookingStatus = bookingResult.success ? "booked" : "failed";
 
         await insertTourBooking({
-          session_id: parsed.sessionId ?? null,
+          session_id: opt(parsed.sessionId) ?? null,
           hubspot_contact_id: bookingResult.success
-            ? bookingResult.contactId ?? parsed.hubspotContactId ?? null
-            : parsed.hubspotContactId ?? null,
-          hubspot_deal_id: parsed.hubspotDealId ?? null,
-          guest_first_name: parsed.firstName ?? null,
-          guest_last_name: parsed.lastName ?? null,
+            ? bookingResult.contactId ?? opt(parsed.hubspotContactId) ?? null
+            : opt(parsed.hubspotContactId) ?? null,
+          hubspot_deal_id: opt(parsed.hubspotDealId) ?? null,
+          guest_first_name: opt(parsed.firstName) ?? null,
+          guest_last_name: opt(parsed.lastName) ?? null,
           guest_email: parsed.email,
-          guest_phone: parsed.phone ?? null,
+          guest_phone: opt(parsed.phone) ?? null,
           tour_type: parsed.tourType,
           timezone: parsed.timezone ?? env.DEFAULT_TIMEZONE,
           scheduled_start_time: bookingResult.success
@@ -274,7 +278,7 @@ export function createMcpServer(): McpServer {
 
         await logToolCall({
           toolName: "book_tour",
-          sessionId: parsed.sessionId,
+          sessionId: opt(parsed.sessionId),
           status: bookingResult.success ? "success" : "error",
           request: parsed,
           response,
@@ -297,7 +301,7 @@ export function createMcpServer(): McpServer {
 
         await logToolCall({
           toolName: "book_tour",
-          sessionId: parsed.sessionId,
+          sessionId: opt(parsed.sessionId),
           status: "error",
           request: parsed,
           response,
@@ -321,7 +325,11 @@ export function createMcpServer(): McpServer {
       const parsed = logRetellSessionInputSchema.parse(input);
 
       try {
-        const payload = logRetellSessionInputToPayload(parsed);
+        const payload = logRetellSessionInputToPayload(
+          Object.fromEntries(
+            Object.entries(parsed).filter(([, value]) => value !== null)
+          ) as Parameters<typeof logRetellSessionInputToPayload>[0]
+        );
         const normalized = normalizeRetellSession(payload);
         const result = await upsertRetellSession(normalized);
 
@@ -346,7 +354,7 @@ export function createMcpServer(): McpServer {
 
         await logToolCall({
           toolName: "log_retell_session",
-          sessionId: parsed.sessionId,
+          sessionId: opt(parsed.sessionId),
           status: "error",
           request: parsed,
           response,
@@ -372,11 +380,11 @@ export function createMcpServer(): McpServer {
       try {
         const env = getEnv();
         const result = await insertTourBooking({
-          session_id: parsed.sessionId ?? null,
-          hubspot_contact_id: parsed.hubspotContactId ?? null,
-          hubspot_deal_id: parsed.hubspotDealId ?? null,
-          guest_email: parsed.guestEmail ?? null,
-          guest_phone: parsed.guestPhone ?? null,
+          session_id: opt(parsed.sessionId) ?? null,
+          hubspot_contact_id: opt(parsed.hubspotContactId) ?? null,
+          hubspot_deal_id: opt(parsed.hubspotDealId) ?? null,
+          guest_email: opt(parsed.guestEmail) ?? null,
+          guest_phone: opt(parsed.guestPhone) ?? null,
           tour_type: parsed.tourType ?? "unknown",
           timezone: env.DEFAULT_TIMEZONE,
           requested_day: parsed.requestedDay ?? null,
@@ -390,7 +398,7 @@ export function createMcpServer(): McpServer {
 
         await logToolCall({
           toolName: "log_tour_preference",
-          sessionId: parsed.sessionId,
+          sessionId: opt(parsed.sessionId),
           status: result.success ? "success" : "error",
           request: parsed,
           response,
@@ -405,7 +413,7 @@ export function createMcpServer(): McpServer {
 
         await logToolCall({
           toolName: "log_tour_preference",
-          sessionId: parsed.sessionId,
+          sessionId: opt(parsed.sessionId),
           status: "error",
           request: parsed,
           response,
