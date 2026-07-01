@@ -34,6 +34,12 @@ const WORD_HOURS: Record<string, number> = {
   twelve: 12,
 };
 
+type TimePreference =
+  | { kind: "any" }
+  | { kind: "after"; afterMinutes: number }
+  | { kind: "window"; startHour: number; endHour: number }
+  | { kind: "around"; targetMinutes: number };
+
 function madridDateKey(date: Date): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: MADRID_TZ }).format(date);
 }
@@ -60,13 +66,18 @@ function madridHourMinute(isoTime: string): { hour: number; minute: number } {
   return { hour, minute };
 }
 
+function slotMinutes(isoTime: string): number {
+  const { hour, minute } = madridHourMinute(isoTime);
+  return hour * 60 + minute;
+}
+
 function addDaysFromDateKey(dateKey: string, days: number): string {
   const [year, month, day] = dateKey.split("-").map(Number);
   const utc = new Date(Date.UTC(year, month - 1, day + days, 12, 0, 0));
   return madridDateKey(utc);
 }
 
-function resolvePreferredDates(
+export function resolvePreferredDates(
   preferredDay: string,
   referenceDate = new Date()
 ): Set<string> | null {
@@ -79,15 +90,15 @@ function resolvePreferredDates(
   if (lower === "tomorrow") return new Set([addDaysFromDateKey(todayKey, 1)]);
 
   for (const weekday of WEEKDAYS) {
-    if (lower.includes(weekday)) {
-      const useNext = lower.includes("next");
-      for (let offset = 0; offset <= 14; offset += 1) {
-        const candidateKey = addDaysFromDateKey(todayKey, offset);
-        const candidateDate = new Date(`${candidateKey}T12:00:00Z`);
-        if (madridWeekday(candidateDate) !== weekday) continue;
-        if (offset === 0 && useNext) continue;
-        return new Set([candidateKey]);
-      }
+    if (!lower.includes(weekday)) continue;
+
+    const useNext = lower.includes("next");
+    for (let offset = 0; offset <= 14; offset += 1) {
+      const candidateKey = addDaysFromDateKey(todayKey, offset);
+      const candidateDate = new Date(`${candidateKey}T12:00:00Z`);
+      if (madridWeekday(candidateDate) !== weekday) continue;
+      if (offset === 0 && useNext) continue;
+      return new Set([candidateKey]);
     }
   }
 
@@ -134,52 +145,92 @@ function parseExactTimeMinutes(preferredTime: string): number | null {
   return null;
 }
 
-function scoreTimeMatch(hour: number, minute: number, preferredTime: string): number {
+function interpretTimePreference(preferredTime: string): TimePreference {
   const lower = preferredTime.toLowerCase().trim();
 
-  for (const [label, [startHour, endHour]] of Object.entries(TIME_WINDOWS)) {
-    if (!lower.includes(label)) continue;
-    const slotMinutes = hour * 60 + minute;
-    const start = startHour * 60;
-    const end = endHour * 60;
-    if (slotMinutes >= start && slotMinutes < end) return 100;
-    if (slotMinutes >= start - 60 && slotMinutes < end + 60) return 70;
-    return 20;
+  if (
+    lower.includes("onwards") ||
+    lower.includes("after") ||
+    lower.includes("from") ||
+    lower.includes("or later")
+  ) {
+    const mins = parseExactTimeMinutes(lower);
+    if (mins !== null) return { kind: "after", afterMinutes: mins };
   }
 
-  const targetMinutes = parseExactTimeMinutes(preferredTime);
-  if (targetMinutes === null) return 50;
+  if (lower.includes("early")) {
+    return { kind: "window", startHour: 6, endHour: 12 };
+  }
 
-  const slotMinutes = hour * 60 + minute;
-  const diff = Math.abs(slotMinutes - targetMinutes);
-  if (diff === 0) return 100;
-  if (diff <= 15) return 90;
-  if (diff <= 30) return 75;
-  if (diff <= 60) return 55;
-  if (diff <= 120) return 30;
-  return 0;
+  for (const [label, [startHour, endHour]] of Object.entries(TIME_WINDOWS)) {
+    if (lower.includes(label)) {
+      return { kind: "window", startHour, endHour };
+    }
+  }
+
+  const exact = parseExactTimeMinutes(lower);
+  if (exact !== null) {
+    // Voice agents often pass "09:00" when the guest said "from 9 onwards".
+    if (exact % 60 === 0 && !lower.includes("exactly")) {
+      return { kind: "after", afterMinutes: exact };
+    }
+    return { kind: "around", targetMinutes: exact };
+  }
+
+  return { kind: "any" };
 }
 
-function scoreDayMatch(
-  slot: AvailableSlot,
-  preferredDay: string,
-  targetDates: Set<string> | null
-): number {
-  const slotDate = new Date(slot.startTime);
-  const dateKey = madridDateKey(slotDate);
-  const weekday = madridWeekday(slotDate);
-  const lower = preferredDay.toLowerCase().trim();
+function matchesTimePreference(isoTime: string, preference: TimePreference): boolean {
+  const minutes = slotMinutes(isoTime);
 
-  if (targetDates?.has(dateKey)) return 100;
-
-  for (const day of WEEKDAYS) {
-    if (lower.includes(day) && weekday === day) return 85;
+  switch (preference.kind) {
+    case "any":
+      return true;
+    case "after":
+      return minutes >= preference.afterMinutes;
+    case "window":
+      return (
+        minutes >= preference.startHour * 60 && minutes < preference.endHour * 60
+      );
+    case "around":
+      return Math.abs(minutes - preference.targetMinutes) <= 90;
   }
+}
 
-  if (weekday.includes(lower) || lower.includes(weekday)) return 75;
-  if (dateKey.includes(lower) || slot.startTime.slice(0, 10).includes(lower)) return 70;
+function timeDistance(isoTime: string, preference: TimePreference): number {
+  const minutes = slotMinutes(isoTime);
 
-  return 0;
+  switch (preference.kind) {
+    case "any":
+      return minutes;
+    case "after":
+      return Math.max(0, minutes - preference.afterMinutes);
+    case "window": {
+      const mid = ((preference.startHour + preference.endHour) / 2) * 60;
+      return Math.abs(minutes - mid);
+    }
+    case "around":
+      return Math.abs(minutes - preference.targetMinutes);
+  }
+}
+
+function matchesWeekdayPreference(slot: AvailableSlot, preferredDay: string): boolean {
+  const lower = preferredDay.toLowerCase().trim();
+  const weekday = madridWeekday(new Date(slot.startTime));
+  return WEEKDAYS.some((day) => lower.includes(day) && weekday === day);
+}
+
+function keepNearestDateSlots(slots: AvailableSlot[]): AvailableSlot[] {
+  if (slots.length === 0) return slots;
+
+  const sorted = [...slots].sort(
+    (a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime()
+  );
+  const nearestDate = madridDateKey(new Date(sorted[0].startTime));
+
+  return sorted.filter(
+    (slot) => madridDateKey(new Date(slot.startTime)) === nearestDate
+  );
 }
 
 export function filterSlotsByPreference(
@@ -194,28 +245,38 @@ export function filterSlotsByPreference(
   const targetDates = preferredDay
     ? resolvePreferredDates(preferredDay, referenceDate)
     : null;
+  const timePreference = preferredTime
+    ? interpretTimePreference(preferredTime)
+    : { kind: "any" as const };
 
-  const scored = slots.map((slot) => {
-    const { hour, minute } = madridHourMinute(slot.startTime);
-    const dayScore = preferredDay
-      ? scoreDayMatch(slot, preferredDay, targetDates)
-      : 50;
-    const timeScore = preferredTime ? scoreTimeMatch(hour, minute, preferredTime) : 50;
-    const score = dayScore * 0.55 + timeScore * 0.45;
+  let pool = [...slots];
 
-    return { slot, score, dayScore, timeScore };
+  if (targetDates?.size) {
+    const onTargetDate = pool.filter((slot) =>
+      targetDates.has(madridDateKey(new Date(slot.startTime)))
+    );
+    if (onTargetDate.length > 0) {
+      pool = onTargetDate;
+    }
+  } else if (preferredDay) {
+    const weekdayMatches = pool.filter((slot) => matchesWeekdayPreference(slot, preferredDay));
+    if (weekdayMatches.length > 0) {
+      pool = keepNearestDateSlots(weekdayMatches);
+    }
+  }
+
+  const timeFiltered = pool.filter((slot) =>
+    matchesTimePreference(slot.startTime, timePreference)
+  );
+  if (timeFiltered.length > 0) {
+    pool = timeFiltered;
+  }
+
+  pool.sort((a, b) => {
+    const timeDiff = timeDistance(a.startTime, timePreference) - timeDistance(b.startTime, timePreference);
+    if (timeDiff !== 0) return timeDiff;
+    return new Date(a.startTime).getTime() - new Date(b.startTime).getTime();
   });
 
-  scored.sort(
-    (a, b) =>
-      b.score - a.score ||
-      new Date(a.slot.startTime).getTime() - new Date(b.slot.startTime).getTime()
-  );
-
-  const strongMatches = scored.filter((entry) => entry.score >= 45);
-  const selected = (strongMatches.length > 0 ? strongMatches : scored)
-    .slice(0, limit)
-    .map((entry) => entry.slot);
-
-  return selected;
+  return pool.slice(0, limit);
 }

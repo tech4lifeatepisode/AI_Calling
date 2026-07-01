@@ -93,16 +93,16 @@ export function createMcpServer(): McpServer {
           displayTimeMadrid: formatDisplayTimeMadrid(slot.startTime),
         }));
 
-        const hasPreferences = Boolean(parsed.preferredDay || parsed.preferredTime);
         const totalSlots = slots.length;
 
         let messageForAgent: string;
         if (availableSlots.length > 0) {
           const times = availableSlots.map((slot) => slot.displayTimeMadrid).join(", ");
           messageForAgent =
-            hasPreferences && totalSlots > availableSlots.length
-              ? `Found ${availableSlots.length} closest matching ${parsed.tourType === "virtual" ? "virtual" : "in-person"} tour slot(s): ${times}. Offer one or two to the guest.`
-              : `Found ${availableSlots.length} available ${parsed.tourType === "virtual" ? "virtual" : "in-person"} tour slot(s): ${times}. Offer one or two to the guest.`;
+            `Only offer these exact HubSpot slots to the guest (do not invent other times): ${times}. ` +
+            (availableSlots.length === 1
+              ? "Ask if this time works."
+              : "Offer one or two of these times and ask which works best.");
         } else if (totalSlots > 0) {
           messageForAgent =
             "No slots matched the guest's preferred day/time, but other times are available. Ask for a broader preference or offer to send booking links by WhatsApp.";
