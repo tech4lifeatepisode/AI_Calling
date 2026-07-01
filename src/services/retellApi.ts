@@ -58,6 +58,14 @@ export function phonesMatch(a: string | null | undefined, b: string | null | und
   return left.slice(-minLen) === right.slice(-minLen);
 }
 
+function buildEnumFilter(values: string[]): { type: "enum"; op: "in"; value: string[] } {
+  return { type: "enum", op: "in", value: values };
+}
+
+function buildNumberGteFilter(value: number): { type: "number"; op: "ge"; value: number } {
+  return { type: "number", op: "ge", value };
+}
+
 export async function listRetellCalls(options?: {
   startAfterMs?: number;
   callStatus?: string[];
@@ -66,19 +74,19 @@ export async function listRetellCalls(options?: {
   let paginationKey: string | undefined;
 
   do {
-    const body: Record<string, unknown> = {
-      sort_order: "descending",
-      limit: 1000,
-      filter_criteria: {
-        call_status: options?.callStatus ?? ["ended"],
-      },
+    const filterCriteria: Record<string, unknown> = {
+      call_status: buildEnumFilter(options?.callStatus ?? ["ended"]),
     };
 
     if (options?.startAfterMs !== undefined) {
-      (body.filter_criteria as Record<string, unknown>).start_timestamp = {
-        lower_threshold: options.startAfterMs,
-      };
+      filterCriteria.start_timestamp = buildNumberGteFilter(options.startAfterMs);
     }
+
+    const body: Record<string, unknown> = {
+      sort_order: "descending",
+      limit: 1000,
+      filter_criteria: filterCriteria,
+    };
 
     if (paginationKey) {
       body.pagination_key = paginationKey;
