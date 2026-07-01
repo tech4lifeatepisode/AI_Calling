@@ -104,41 +104,65 @@ function buildStringEqFilter(value: string): { type: "string"; op: "eq"; value: 
   return { type: "string", op: "eq", value };
 }
 
-function buildStringEndsWithFilter(value: string): { type: "string"; op: "ew"; value: string } {
-  return { type: "string", op: "ew", value };
+function buildPhoneSearchFilters(phone: string): Array<{
+  field: "to_number" | "from_number";
+  filter: { type: "string"; op: "eq"; value: string };
+}> {
+  const trimmed = phone.trim();
+  const digits = normalizePhone(trimmed);
+  const filters: Array<{
+    field: "to_number" | "from_number";
+    filter: { type: "string"; op: "eq"; value: string };
+  }> = [];
+
+  if (trimmed) {
+    filters.push({ field: "to_number", filter: buildStringEqFilter(trimmed) });
+    filters.push({ field: "from_number", filter: buildStringEqFilter(trimmed) });
+  }
+
+  if (digits && !trimmed.startsWith("+")) {
+    const e164 = `+${digits}`;
+    filters.push({ field: "to_number", filter: buildStringEqFilter(e164) });
+    filters.push({ field: "from_number", filter: buildStringEqFilter(e164) });
+  }
+
+  return filters;
 }
 
 export async function findRetellCallsByPhone(phone: string): Promise<RetellCallSummary[]> {
-  const keys = phoneMatchKeys(phone).sort((a, b) => b.length - a.length);
   const seen = new Set<string>();
   const matches: RetellCallSummary[] = [];
 
-  for (const key of keys) {
-    for (const field of ["to_number", "from_number"] as const) {
-      for (const filter of [buildStringEqFilter(`+${key}`), buildStringEndsWithFilter(key)]) {
-        const body = {
-          sort_order: "descending",
-          limit: 5,
-          filter_criteria: {
-            call_status: buildEnumFilter(["ended"]),
-            [field]: filter,
-          },
-        };
+  for (const { field, filter } of buildPhoneSearchFilters(phone)) {
+    const body = {
+      sort_order: "descending",
+      limit: 5,
+      filter_criteria: {
+        call_status: buildEnumFilter(["ended"]),
+        [field]: filter,
+      },
+    };
 
-        const result = await retellFetch<RetellListCallsResponse>("/v3/list-calls", {
-          method: "POST",
-          body: JSON.stringify(body),
-        });
+    const result = await retellFetch<RetellListCallsResponse>("/v3/list-calls", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
 
-        if (!result.ok || !result.data?.items?.length) continue;
-
-        for (const call of result.data.items) {
-          if (seen.has(call.call_id)) continue;
-          seen.add(call.call_id);
-          matches.push(call);
-        }
+    if (!result.ok) {
+      if (result.status === 429) {
+        logger.warn("Retell rate limited during phone lookup", { phone, field });
+        break;
       }
+      continue;
     }
+
+    for (const call of result.data?.items ?? []) {
+      if (seen.has(call.call_id)) continue;
+      seen.add(call.call_id);
+      matches.push(call);
+    }
+
+    if (matches.length > 0) break;
   }
 
   matches.sort((a, b) => (b.start_timestamp ?? 0) - (a.start_timestamp ?? 0));

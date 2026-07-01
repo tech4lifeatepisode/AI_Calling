@@ -21,6 +21,11 @@ import {
 } from "./supabase.js";
 
 const SYNC_OVERLAP_MS = 24 * 60 * 60 * 1000;
+const PHONE_LOOKUP_DELAY_MS = 120;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 export interface CallSyncOptions {
   full?: boolean;
@@ -131,6 +136,9 @@ export async function runCallSync(options: CallSyncOptions = {}): Promise<CallSy
         );
 
         if (!matchedCall && contactPhone) {
+          if (options.full) {
+            await sleep(PHONE_LOOKUP_DELAY_MS);
+          }
           const phoneMatches = await findRetellCallsByPhone(contactPhone);
           matchedCall = phoneMatches[0] ?? null;
         }
