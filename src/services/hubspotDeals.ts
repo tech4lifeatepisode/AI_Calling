@@ -13,7 +13,7 @@ interface HubSpotSearchResponse {
 }
 
 interface HubSpotAssociationResponse {
-  results?: Array<{ id: string; type?: string }>;
+  results?: Array<{ id?: string; toObjectId?: number | string; type?: string }>;
 }
 
 interface HubSpotContactResponse {
@@ -106,24 +106,74 @@ export async function searchDealsWithAiCallAttempted(options?: {
   return deals;
 }
 
+interface HubSpotDealWithAssociations {
+  id?: string;
+  properties?: Record<string, string | null | undefined>;
+  associations?: {
+    contacts?: {
+      results?: Array<{ id?: string }>;
+    };
+  };
+}
+
+function extractAssociationId(
+  result: { id?: string; toObjectId?: number | string } | undefined
+): string | null {
+  if (!result) return null;
+  if (result.id) return String(result.id);
+  if (result.toObjectId !== undefined) return String(result.toObjectId);
+  return null;
+}
+
+function pickContactPhone(props: Record<string, string | null | undefined>): string | null {
+  const candidates = [
+    props.phone,
+    props.mobilephone,
+    props.hs_whatsapp_phone_number,
+    props.hs_calculated_phone_number,
+    props.hs_searchable_calculated_international_phone_number,
+  ];
+
+  for (const value of candidates) {
+    const trimmed = value?.trim();
+    if (trimmed) return trimmed;
+  }
+
+  return null;
+}
+
 export async function getDealContactPhone(dealId: string): Promise<string | null> {
-  const associations = await hubspotFetch<HubSpotAssociationResponse>(
-    `/crm/v4/objects/deals/${dealId}/associations/contacts`
+  const dealWithAssociations = await hubspotFetch<HubSpotDealWithAssociations>(
+    `/crm/v3/objects/deals/${dealId}?associations=contacts`
   );
 
-  if (!associations.ok) {
-    logger.warn("Failed to fetch deal contact associations", {
-      dealId,
-      status: associations.status,
-    });
+  let contactId = extractAssociationId(
+    dealWithAssociations.data?.associations?.contacts?.results?.[0]
+  );
+
+  if (!contactId) {
+    const associations = await hubspotFetch<HubSpotAssociationResponse>(
+      `/crm/v4/objects/deals/${dealId}/associations/contacts`
+    );
+
+    if (!associations.ok) {
+      logger.warn("Failed to fetch deal contact associations", {
+        dealId,
+        status: associations.status,
+      });
+      return null;
+    }
+
+    contactId = extractAssociationId(associations.data?.results?.[0]);
+  }
+
+  if (!contactId) {
+    logger.warn("No associated contact found for deal", { dealId });
     return null;
   }
 
-  const contactId = associations.data?.results?.[0]?.id;
-  if (!contactId) return null;
-
   const contact = await hubspotFetch<HubSpotContactResponse>(
-    `/crm/v3/objects/contacts/${contactId}?properties=phone,mobilephone,hs_whatsapp_phone_number`
+    `/crm/v3/objects/contacts/${contactId}?properties=phone,mobilephone,hs_whatsapp_phone_number,hs_calculated_phone_number,hs_searchable_calculated_international_phone_number`
   );
 
   if (!contact.ok || !contact.data?.properties) {
@@ -131,6 +181,5 @@ export async function getDealContactPhone(dealId: string): Promise<string | null
     return null;
   }
 
-  const props = contact.data.properties;
-  return props.phone?.trim() || props.mobilephone?.trim() || props.hs_whatsapp_phone_number?.trim() || null;
+  return pickContactPhone(contact.data.properties);
 }

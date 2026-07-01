@@ -8,6 +8,7 @@ import { logger } from "./logger.js";
 import {
   buildCallIndexes,
   findCallForDeal,
+  findRetellCallsByPhone,
   getRetellCall,
   listRetellCalls,
   retellCallToSessionRow,
@@ -32,6 +33,7 @@ export interface CallSyncResult {
   dealsProcessed: number;
   sessionsUpserted: number;
   sessionsSkipped: number;
+  skipReasons: Record<string, number>;
   errors: Array<{ dealId: string; error: string }>;
 }
 
@@ -61,7 +63,13 @@ export async function runCallSync(options: CallSyncOptions = {}): Promise<CallSy
     dealsProcessed: 0,
     sessionsUpserted: 0,
     sessionsSkipped: 0,
+    skipReasons: {},
     errors: [],
+  };
+
+  const recordSkip = (reason: string): void => {
+    result.sessionsSkipped += 1;
+    result.skipReasons[reason] = (result.skipReasons[reason] ?? 0) + 1;
   };
 
   const syncRun = await insertSyncRun({
@@ -108,24 +116,28 @@ export async function runCallSync(options: CallSyncOptions = {}): Promise<CallSy
 
       try {
         const dealCallId = getRetellCallIdFromDeal(deal);
-        let contactPhone = phoneCache.get(deal.id) ?? null;
+        let contactPhone = phoneCache.get(deal.id);
 
-        if (!dealCallId && !indexes.byDealId.has(deal.id)) {
-          if (!phoneCache.has(deal.id)) {
-            contactPhone = await getDealContactPhone(deal.id);
-            phoneCache.set(deal.id, contactPhone);
-          }
+        if (contactPhone === undefined) {
+          contactPhone = await getDealContactPhone(deal.id);
+          phoneCache.set(deal.id, contactPhone);
         }
 
-        const matchedCall = findCallForDeal(
+        let matchedCall = findCallForDeal(
           deal.id,
           dealCallId,
           contactPhone,
           indexes
         );
 
+        if (!matchedCall && contactPhone) {
+          const phoneMatches = await findRetellCallsByPhone(contactPhone);
+          matchedCall = phoneMatches[0] ?? null;
+        }
+
         if (!matchedCall) {
-          result.sessionsSkipped += 1;
+          const reason = !contactPhone && !dealCallId ? "no_contact_phone_or_call_id" : "no_retell_call_match";
+          recordSkip(reason);
           continue;
         }
 
@@ -138,7 +150,7 @@ export async function runCallSync(options: CallSyncOptions = {}): Promise<CallSy
         if (upsertResult.upserted) {
           result.sessionsUpserted += 1;
         } else {
-          result.sessionsSkipped += 1;
+          recordSkip("upsert_failed");
           if (upsertResult.error) {
             result.errors.push({ dealId: deal.id, error: upsertResult.error });
           }
@@ -160,6 +172,7 @@ export async function runCallSync(options: CallSyncOptions = {}): Promise<CallSy
       metadata: {
         full: Boolean(options.full),
         retellCallsIndexed: retellCalls.length,
+        skipReasons: result.skipReasons,
       },
     });
 

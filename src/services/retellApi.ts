@@ -49,13 +49,35 @@ export function normalizePhone(value: string | null | undefined): string | null 
   return digits.length >= 6 ? digits : null;
 }
 
+export function phoneMatchKeys(value: string | null | undefined): string[] {
+  const digits = normalizePhone(value);
+  if (!digits) return [];
+
+  const keys = new Set<string>([digits]);
+
+  if (digits.startsWith("34") && digits.length > 9) {
+    keys.add(digits.slice(2));
+  } else if (digits.length === 9) {
+    keys.add(`34${digits}`);
+  }
+
+  if (digits.length >= 9) {
+    keys.add(digits.slice(-9));
+  }
+
+  if (digits.length >= 10) {
+    keys.add(digits.slice(-10));
+  }
+
+  return [...keys];
+}
+
 export function phonesMatch(a: string | null | undefined, b: string | null | undefined): boolean {
-  const left = normalizePhone(a);
-  const right = normalizePhone(b);
-  if (!left || !right) return false;
-  if (left === right) return true;
-  const minLen = Math.min(left.length, right.length, 9);
-  return left.slice(-minLen) === right.slice(-minLen);
+  const leftKeys = phoneMatchKeys(a);
+  const rightKeys = phoneMatchKeys(b);
+  if (leftKeys.length === 0 || rightKeys.length === 0) return false;
+
+  return leftKeys.some((left) => rightKeys.some((right) => left === right || left.endsWith(right) || right.endsWith(left)));
 }
 
 function buildEnumFilter(values: string[]): { type: "enum"; op: "in"; value: string[] } {
@@ -64,6 +86,63 @@ function buildEnumFilter(values: string[]): { type: "enum"; op: "in"; value: str
 
 function buildNumberGteFilter(value: number): { type: "number"; op: "ge"; value: number } {
   return { type: "number", op: "ge", value };
+}
+
+function indexPhoneKeys(
+  byPhone: Map<string, RetellCallSummary[]>,
+  phone: string | null | undefined,
+  call: RetellCallSummary
+): void {
+  for (const key of phoneMatchKeys(phone)) {
+    const bucket = byPhone.get(key) ?? [];
+    bucket.push(call);
+    byPhone.set(key, bucket);
+  }
+}
+
+function buildStringEqFilter(value: string): { type: "string"; op: "eq"; value: string } {
+  return { type: "string", op: "eq", value };
+}
+
+function buildStringEndsWithFilter(value: string): { type: "string"; op: "ew"; value: string } {
+  return { type: "string", op: "ew", value };
+}
+
+export async function findRetellCallsByPhone(phone: string): Promise<RetellCallSummary[]> {
+  const keys = phoneMatchKeys(phone).sort((a, b) => b.length - a.length);
+  const seen = new Set<string>();
+  const matches: RetellCallSummary[] = [];
+
+  for (const key of keys) {
+    for (const field of ["to_number", "from_number"] as const) {
+      for (const filter of [buildStringEqFilter(`+${key}`), buildStringEndsWithFilter(key)]) {
+        const body = {
+          sort_order: "descending",
+          limit: 5,
+          filter_criteria: {
+            call_status: buildEnumFilter(["ended"]),
+            [field]: filter,
+          },
+        };
+
+        const result = await retellFetch<RetellListCallsResponse>("/v3/list-calls", {
+          method: "POST",
+          body: JSON.stringify(body),
+        });
+
+        if (!result.ok || !result.data?.items?.length) continue;
+
+        for (const call of result.data.items) {
+          if (seen.has(call.call_id)) continue;
+          seen.add(call.call_id);
+          matches.push(call);
+        }
+      }
+    }
+  }
+
+  matches.sort((a, b) => (b.start_timestamp ?? 0) - (a.start_timestamp ?? 0));
+  return matches;
 }
 
 export async function listRetellCalls(options?: {
@@ -191,11 +270,7 @@ export function buildCallIndexes(calls: RetellCallSummary[]): {
     }
 
     for (const phone of [call.from_number, call.to_number]) {
-      const normalized = normalizePhone(phone);
-      if (!normalized) continue;
-      const bucket = byPhone.get(normalized) ?? [];
-      bucket.push(call);
-      byPhone.set(normalized, bucket);
+      indexPhoneKeys(byPhone, phone, call);
     }
   }
 
@@ -221,11 +296,13 @@ export function findCallForDeal(
 
   if (!contactPhone) return null;
 
-  const normalizedContact = normalizePhone(contactPhone);
-  if (!normalizedContact) return null;
+  for (const key of phoneMatchKeys(contactPhone)) {
+    const calls = indexes.byPhone.get(key);
+    if (calls?.[0]) return calls[0];
+  }
 
   for (const [phone, calls] of indexes.byPhone.entries()) {
-    if (!phonesMatch(normalizedContact, phone)) continue;
+    if (!phonesMatch(contactPhone, phone)) continue;
     return calls[0] ?? null;
   }
 
