@@ -2,23 +2,14 @@ import { z } from "zod";
 
 export const tourTypeSchema = z.enum(["virtual", "in_person"]);
 
-// Retell sends explicit null for omitted optional fields; preprocess before MCP validation.
-const nullableString = z.preprocess(
-  (val) => (val === null ? undefined : val),
-  z.string().optional()
-);
-const nullableEmail = z.preprocess(
-  (val) => (val === null ? undefined : val),
-  z.string().email().optional()
-);
-
+// Use separate optional fields (not shared Zod instances) so JSON Schema has no $ref/null unions.
 export const getTourAvailabilityInputSchema = z.object({
   tourType: tourTypeSchema,
   timezone: z.string().optional(),
   monthOffset: z.number().int().min(0).optional(),
-  preferredDay: nullableString,
-  preferredTime: nullableString,
-  sessionId: nullableString,
+  preferredDay: z.string().optional(),
+  preferredTime: z.string().optional(),
+  sessionId: z.string().optional(),
   execution_message: z.string().optional(),
 });
 
@@ -28,51 +19,51 @@ export const bookTourInputSchema = z.object({
   durationMinutes: z.number().int().positive().optional(),
   timezone: z.string().optional(),
   email: z.string().email(),
-  firstName: nullableString,
-  lastName: nullableString,
-  phone: nullableString,
-  hubspotContactId: nullableString,
-  hubspotDealId: nullableString,
-  sessionId: nullableString,
+  firstName: z.string().optional(),
+  lastName: z.string().optional(),
+  phone: z.string().optional(),
+  hubspotContactId: z.string().optional(),
+  hubspotDealId: z.string().optional(),
+  sessionId: z.string().optional(),
   execution_message: z.string().optional(),
 });
 
 export const logRetellSessionInputSchema = z.object({
-  time: nullableString,
-  duration: z.union([z.number(), z.string(), z.null()]).optional(),
-  channelType: nullableString,
-  cost: z.union([z.number(), z.string(), z.null()]).optional(),
-  sessionId: nullableString,
-  endReason: nullableString,
-  sessionStatus: nullableString,
-  userSentiment: nullableString,
-  agentId: nullableString,
-  agentVersion: nullableString,
-  agentName: nullableString,
-  from: nullableString,
-  to: nullableString,
-  direction: nullableString,
-  sessionOutcome: nullableString,
-  endToEndLatency: z.union([z.number(), z.string(), z.null()]).optional(),
-  recordingUrl: nullableString,
-  scrubbedRecordingUrl: nullableString,
-  publicLogUrl: nullableString,
-  transcript: nullableString,
-  transcriptWithToolCalls: nullableString,
-  scrubbedTranscriptWithToolCalls: nullableString,
-  rawPayload: z.record(z.unknown()).nullable().optional(),
+  time: z.string().optional(),
+  duration: z.union([z.number(), z.string()]).optional(),
+  channelType: z.string().optional(),
+  cost: z.union([z.number(), z.string()]).optional(),
+  sessionId: z.string().optional(),
+  endReason: z.string().optional(),
+  sessionStatus: z.string().optional(),
+  userSentiment: z.string().optional(),
+  agentId: z.string().optional(),
+  agentVersion: z.string().optional(),
+  agentName: z.string().optional(),
+  from: z.string().optional(),
+  to: z.string().optional(),
+  direction: z.string().optional(),
+  sessionOutcome: z.string().optional(),
+  endToEndLatency: z.union([z.number(), z.string()]).optional(),
+  recordingUrl: z.string().optional(),
+  scrubbedRecordingUrl: z.string().optional(),
+  publicLogUrl: z.string().optional(),
+  transcript: z.string().optional(),
+  transcriptWithToolCalls: z.string().optional(),
+  scrubbedTranscriptWithToolCalls: z.string().optional(),
+  rawPayload: z.record(z.unknown()).optional(),
   execution_message: z.string().optional(),
 });
 
 export const logTourPreferenceInputSchema = z.object({
-  sessionId: nullableString,
-  hubspotContactId: nullableString,
-  hubspotDealId: nullableString,
+  sessionId: z.string().optional(),
+  hubspotContactId: z.string().optional(),
+  hubspotDealId: z.string().optional(),
   tourType: z.enum(["virtual", "in_person", "unknown"]).optional(),
-  requestedDay: nullableString,
-  requestedTime: nullableString,
-  guestEmail: nullableEmail,
-  guestPhone: nullableString,
+  requestedDay: z.string().optional(),
+  requestedTime: z.string().optional(),
+  guestEmail: z.string().email().optional(),
+  guestPhone: z.string().optional(),
   status: z.enum(["interested", "not_interested", "asked_to_send_links", "booking_failed"]),
   execution_message: z.string().optional(),
 });

@@ -3,6 +3,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { requireBearerAuth } from "./services/auth.js";
 import { healthHandler } from "./routes/health.js";
 import { retellWebhookHandler } from "./routes/retellWebhook.js";
+import { sanitizeMcpRequestBody } from "./mcp/sanitizeToolInput.js";
 import { createMcpServer } from "./mcp/tools.js";
 import { logger } from "./services/logger.js";
 
@@ -24,7 +25,8 @@ async function handleMcpPost(req: Request, res: Response): Promise<void> {
 
   try {
     await server.connect(transport);
-    await transport.handleRequest(req, res, req.body);
+    const body = sanitizeMcpRequestBody(req.body);
+    await transport.handleRequest(req, res, body);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logger.error("MCP POST error", { message });
