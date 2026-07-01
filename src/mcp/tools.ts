@@ -41,9 +41,13 @@ async function logToolCall(params: {
   });
 }
 
-function jsonResult(data: unknown) {
+function jsonResult(data: Record<string, unknown>) {
+  // Keep payloads small and JSON-native for Retell MCP parsing.
+  const { debugRawHubSpotResponse: _debug, ...safeData } = data;
+
   return {
-    content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
+    content: [{ type: "text" as const, text: JSON.stringify(safeData) }],
+    structuredContent: safeData,
   };
 }
 
@@ -94,7 +98,6 @@ export function createMcpServer(): McpServer {
             availableSlots.length > 0
               ? `Found ${availableSlots.length} available ${parsed.tourType === "virtual" ? "virtual" : "in-person"} tour slot(s). Offer one or two to the guest.`
               : "No available tour slots were found for the requested period. Offer to send tour links by WhatsApp instead.",
-          debugRawHubSpotResponse: availableSlots.length === 0 ? rawResponse : undefined,
         };
 
         await logToolCall({
@@ -102,7 +105,10 @@ export function createMcpServer(): McpServer {
           sessionId: parsed.sessionId,
           status: "success",
           request: parsed,
-          response,
+          response: {
+            ...response,
+            debugRawHubSpotResponse: availableSlots.length === 0 ? rawResponse : undefined,
+          },
           startedAt,
         });
 
