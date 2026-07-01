@@ -20,6 +20,10 @@ const envSchema = z.object({
   HUBSPOT_RETELL_CALL_ID_PROPERTIES: z
     .string()
     .default("retell_call_id,retell_session_id,ai_retell_call_id"),
+  HUBSPOT_DEAL_UNIT_TYPE_PROPERTY: z.string().default("unit_type__carabanchel_"),
+  HUBSPOT_DEAL_CONTRACT_START_PROPERTY: z.string().default("desired_check_in_date"),
+  HUBSPOT_DEAL_CONTRACT_END_PROPERTY: z.string().default("desired_check_out_date"),
+  HUBSPOT_DEAL_PIPELINE_LABEL: z.string().default("Hubs B2C - Carabanchel"),
   SYNC_ENABLED: z
     .enum(["true", "false"])
     .default("false")

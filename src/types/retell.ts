@@ -2,7 +2,26 @@ import type { RetellSessionRow } from "./supabase.js";
 
 export type RetellPayload = Record<string, unknown>;
 
-const FIELD_ALIASES: Record<keyof Omit<RetellSessionRow, "id" | "created_at" | "updated_at" | "raw_payload">, string[]> = {
+type RetellPayloadFieldKey = keyof Omit<
+  RetellSessionRow,
+  | "id"
+  | "created_at"
+  | "updated_at"
+  | "raw_payload"
+  | "hubspot_contact_id"
+  | "hubspot_contact_name"
+  | "hubspot_contact_email"
+  | "hubspot_contact_phone"
+  | "hubspot_deal_name"
+  | "hubspot_pipeline"
+  | "hubspot_deal_stage"
+  | "hubspot_deal_stage_id"
+  | "hubspot_unit_type"
+  | "hubspot_contract_start_date"
+  | "hubspot_contract_end_date"
+>;
+
+const FIELD_ALIASES: Record<RetellPayloadFieldKey, string[]> = {
   session_time: ["time", "Time", "session_time", "sessionTime", "call_time", "callTime"],
   duration_seconds: ["duration", "Duration", "duration_seconds", "durationSeconds", "call_duration", "callDuration"],
   channel_type: ["channelType", "Channel Type", "channel_type", "channel"],

@@ -1,9 +1,15 @@
 import type { RetellCallSummary } from "../types/retellApi.js";
+import type { HubSpotDealEnrichment } from "../types/hubspotCrm.js";
 import {
-  getDealContactPhone,
   getRetellCallIdFromDeal,
   searchDealsWithAiCallAttempted,
+  type HubSpotDealRecord,
 } from "./hubspotDeals.js";
+import {
+  buildDealEnrichment,
+  dealEnrichmentToSessionFields,
+  getDealContactDetails,
+} from "./hubspotEnrichment.js";
 import { logger } from "./logger.js";
 import {
   buildCallIndexes,
@@ -43,15 +49,19 @@ export interface CallSyncResult {
 }
 
 async function upsertDealCall(
-  dealId: string,
+  deal: HubSpotDealRecord,
   callSummary: RetellCallSummary,
+  enrichment: HubSpotDealEnrichment,
   hydrateTranscripts: boolean
 ): Promise<{ upserted: boolean; error?: string }> {
   const call = hydrateTranscripts
     ? (await getRetellCall(callSummary.call_id)) ?? callSummary
     : callSummary;
 
-  const row = retellCallToSessionRow(call, dealId);
+  const row = {
+    ...retellCallToSessionRow(call, deal.id),
+    ...dealEnrichmentToSessionFields(enrichment),
+  };
   const result = await upsertRetellSession(row);
 
   if (!result.success) {
@@ -114,19 +124,22 @@ export async function runCallSync(options: CallSyncOptions = {}): Promise<CallSy
     );
 
     const indexes = buildCallIndexes(retellCalls);
-    const phoneCache = new Map<string, string | null>();
+    const contactCache = new Map<string, Awaited<ReturnType<typeof getDealContactDetails>>>();
 
     for (const deal of deals) {
       result.dealsProcessed += 1;
 
       try {
         const dealCallId = getRetellCallIdFromDeal(deal);
-        let contactPhone = phoneCache.get(deal.id);
+        let contact = contactCache.get(deal.id);
 
-        if (contactPhone === undefined) {
-          contactPhone = await getDealContactPhone(deal.id);
-          phoneCache.set(deal.id, contactPhone);
+        if (contact === undefined) {
+          contact = await getDealContactDetails(deal.id);
+          contactCache.set(deal.id, contact);
         }
+
+        const contactPhone = contact?.phone ?? null;
+        const enrichment = await buildDealEnrichment(deal, contact);
 
         let matchedCall = findCallForDeal(
           deal.id,
@@ -150,8 +163,9 @@ export async function runCallSync(options: CallSyncOptions = {}): Promise<CallSy
         }
 
         const upsertResult = await upsertDealCall(
-          deal.id,
+          deal,
           matchedCall,
+          enrichment,
           hydrateTranscripts
         );
 

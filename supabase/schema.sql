@@ -29,11 +29,23 @@ CREATE TABLE IF NOT EXISTS retell_sessions (
   transcript_with_tool_calls text NULL,
   scrubbed_transcript_with_tool_calls text NULL,
   hubspot_deal_id text NULL,
+  hubspot_contact_id text NULL,
+  hubspot_contact_name text NULL,
+  hubspot_contact_email text NULL,
+  hubspot_contact_phone text NULL,
+  hubspot_deal_name text NULL,
+  hubspot_pipeline text NULL,
+  hubspot_deal_stage text NULL,
+  hubspot_deal_stage_id text NULL,
+  hubspot_unit_type text NULL,
+  hubspot_contract_start_date timestamptz NULL,
+  hubspot_contract_end_date timestamptz NULL,
   raw_payload jsonb NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_retell_sessions_session_id ON retell_sessions (session_id);
 CREATE INDEX IF NOT EXISTS idx_retell_sessions_hubspot_deal_id ON retell_sessions (hubspot_deal_id);
+CREATE INDEX IF NOT EXISTS idx_retell_sessions_hubspot_contact_id ON retell_sessions (hubspot_contact_id);
 
 -- B. mcp_tool_calls
 CREATE TABLE IF NOT EXISTS mcp_tool_calls (

@@ -198,12 +198,32 @@ RUN_BOOKING_TEST=true TEST_BOOKING_EMAIL=you@example.com npx tsx scripts/testBoo
 
 ## Supabase tables
 
-- `retell_sessions` — Retell call/session metadata (upsert by `session_id`, includes `hubspot_deal_id`)
+- `retell_sessions` — Retell call/session metadata plus HubSpot deal/contact enrichment (upsert by `session_id`)
 - `mcp_tool_calls` — MCP tool request/response logs
 - `tour_bookings` — Tour bookings and preferences
 - `sync_runs` — Audit log for HubSpot deal → Retell call sync jobs
 
-See [`supabase/schema.sql`](supabase/schema.sql) for full schema. Existing projects should also run [`supabase/migrations/20260701_call_sync.sql`](supabase/migrations/20260701_call_sync.sql).
+See [`supabase/schema.sql`](supabase/schema.sql) for full schema. Existing projects should also run:
+
+- [`supabase/migrations/20260701_call_sync.sql`](supabase/migrations/20260701_call_sync.sql)
+- [`supabase/migrations/20260701_hubspot_enrichment.sql`](supabase/migrations/20260701_hubspot_enrichment.sql)
+
+**HubSpot fields stored on `retell_sessions` after sync:**
+
+| Column | Source |
+|--------|--------|
+| `hubspot_deal_id` | Deal ID |
+| `hubspot_deal_name` | Deal name |
+| `hubspot_pipeline` | Pipeline label (e.g. Hubs B2C - Carabanchel) |
+| `hubspot_deal_stage` | Stage label (e.g. Contacted) |
+| `hubspot_deal_stage_id` | Stage internal ID |
+| `hubspot_unit_type` | `unit_type__carabanchel_` |
+| `hubspot_contract_start_date` | `desired_check_in_date` |
+| `hubspot_contract_end_date` | `desired_check_out_date` |
+| `hubspot_contact_id` | Associated contact ID |
+| `hubspot_contact_name` | Contact first + last name |
+| `hubspot_contact_email` | Contact email |
+| `hubspot_contact_phone` | Contact phone |
 
 ---
 

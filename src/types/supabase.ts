@@ -25,6 +25,17 @@ export interface RetellSessionRow {
   transcript_with_tool_calls?: string | null;
   scrubbed_transcript_with_tool_calls?: string | null;
   hubspot_deal_id?: string | null;
+  hubspot_contact_id?: string | null;
+  hubspot_contact_name?: string | null;
+  hubspot_contact_email?: string | null;
+  hubspot_contact_phone?: string | null;
+  hubspot_deal_name?: string | null;
+  hubspot_pipeline?: string | null;
+  hubspot_deal_stage?: string | null;
+  hubspot_deal_stage_id?: string | null;
+  hubspot_unit_type?: string | null;
+  hubspot_contract_start_date?: string | null;
+  hubspot_contract_end_date?: string | null;
   raw_payload?: Record<string, unknown> | null;
 }
 
