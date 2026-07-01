@@ -98,12 +98,18 @@ The **Retell Connection** private app needs:
 
 | Setting | Value |
 |---------|-------|
-| Build command | `npm install && npm run build` |
+| Build command | `npm ci --include=dev && npm run build` |
 | Start command | `npm start` |
 | Health check path | `/health` |
 | Instance | **Starter** recommended (Free tier cold starts can exceed Retell's 20s MCP timeout) |
 
+**Do not use `yarn` or `yarn start`** — this repo uses npm (`package-lock.json`). Using `yarn` alone skips the TypeScript build and causes `Cannot find module dist/index.js`.
+
+A [`render.yaml`](render.yaml) is included in the repo with the correct commands.
+
 Add all environment variables from the table above in **Render → Environment**.
+
+After changing build/start commands in the Render dashboard, trigger **Manual Deploy → Clear build cache & deploy**.
 
 ---
 
@@ -113,18 +119,18 @@ In **Retell → MCP → Add MCP**:
 
 | Field | Value |
 |-------|-------|
-| MCP server URL | `https://<your-render-service>.onrender.com/mcp` |
+| MCP server URL | `https://ai-calling-j1hu.onrender.com/mcp` |
 | Timeout | `20000` |
 | Headers | `Authorization: Bearer <MCP_SERVER_SECRET>` |
 
 Select these tools after deploy:
 
 - `get_tour_availability`
-- `book_tour`
+- `book_tour` (requires HubSpot `meetings-write` scope)
 - `log_retell_session`
 - `log_tour_preference`
 
-Optional webhook (post-call): point Retell to `POST https://<your-render-service>.onrender.com/webhooks/retell` with the same bearer header.
+Optional webhook (post-call): `POST https://ai-calling-j1hu.onrender.com/webhooks/retell` with the same bearer header.
 
 ---
 
