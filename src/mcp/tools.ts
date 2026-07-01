@@ -93,15 +93,31 @@ export function createMcpServer(): McpServer {
           displayTimeMadrid: formatDisplayTimeMadrid(slot.startTime),
         }));
 
+        const hasPreferences = Boolean(parsed.preferredDay || parsed.preferredTime);
+        const totalSlots = slots.length;
+
+        let messageForAgent: string;
+        if (availableSlots.length > 0) {
+          const times = availableSlots.map((slot) => slot.displayTimeMadrid).join(", ");
+          messageForAgent =
+            hasPreferences && totalSlots > availableSlots.length
+              ? `Found ${availableSlots.length} closest matching ${parsed.tourType === "virtual" ? "virtual" : "in-person"} tour slot(s): ${times}. Offer one or two to the guest.`
+              : `Found ${availableSlots.length} available ${parsed.tourType === "virtual" ? "virtual" : "in-person"} tour slot(s): ${times}. Offer one or two to the guest.`;
+        } else if (totalSlots > 0) {
+          messageForAgent =
+            "No slots matched the guest's preferred day/time, but other times are available. Ask for a broader preference or offer to send booking links by WhatsApp.";
+        } else {
+          messageForAgent =
+            "No available tour slots were found for the requested period. Offer to send tour links by WhatsApp instead.";
+        }
+
         const response = {
           success: true,
           tourType: parsed.tourType,
           timezone,
           availableSlots,
-          messageForAgent:
-            availableSlots.length > 0
-              ? `Found ${availableSlots.length} available ${parsed.tourType === "virtual" ? "virtual" : "in-person"} tour slot(s). Offer one or two to the guest.`
-              : "No available tour slots were found for the requested period. Offer to send tour links by WhatsApp instead.",
+          totalSlotsFound: totalSlots,
+          messageForAgent,
         };
 
         await logToolCall({
@@ -111,7 +127,7 @@ export function createMcpServer(): McpServer {
           request: parsed,
           response: {
             ...response,
-            debugRawHubSpotResponse: availableSlots.length === 0 ? rawResponse : undefined,
+            debugRawHubSpotResponse: totalSlots === 0 ? rawResponse : undefined,
           },
           startedAt,
         });

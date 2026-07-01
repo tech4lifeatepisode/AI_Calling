@@ -86,9 +86,12 @@ export interface HubSpotLinkAvailability {
   linkAvailabilityByDuration?: Record<
     string,
     {
+      meetingDurationMillis?: number;
       availabilities?: Array<{
         startMillisUtc?: number;
         endMillisUtc?: number;
+        start?: number;
+        end?: number;
         likelyAvailableUserIds?: string[];
       }>;
     }

@@ -2,8 +2,15 @@ import { z } from "zod";
 
 export const tourTypeSchema = z.enum(["virtual", "in_person"]);
 
-const nullableString = z.string().nullable().optional();
-const nullableEmail = z.string().email().nullable().optional();
+// Retell sends explicit null for omitted optional fields; preprocess before MCP validation.
+const nullableString = z.preprocess(
+  (val) => (val === null ? undefined : val),
+  z.string().optional()
+);
+const nullableEmail = z.preprocess(
+  (val) => (val === null ? undefined : val),
+  z.string().email().optional()
+);
 
 export const getTourAvailabilityInputSchema = z.object({
   tourType: tourTypeSchema,

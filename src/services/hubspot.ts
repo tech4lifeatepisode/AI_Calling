@@ -15,6 +15,15 @@ import type {
 } from "../types/hubspot.js";
 
 const SCHEDULER_VERSION = "2026-03";
+const DEFAULT_MONTH_FETCHES = [0, 1, 2];
+
+function encodeSlugForPath(slug: string): string {
+  return encodeURIComponent(slug);
+}
+
+function schedulerPath(pathAfterMeetings: string, slug: string): string {
+  return `/scheduler/${SCHEDULER_VERSION}/meetings/meeting-links/${pathAfterMeetings}/${encodeSlugForPath(slug)}`;
+}
 
 function getSlugForTourType(tourType: TourType): string {
   const env = getEnv();
@@ -92,13 +101,21 @@ function parseAvailabilityResponse(
     const durationMs = Number(durationKey);
     const durationMinutes = Number.isFinite(durationMs)
       ? Math.round(durationMs / 60000)
-      : defaultDurationMinutes;
+      : durationData?.meetingDurationMillis
+        ? Math.round(durationData.meetingDurationMillis / 60000)
+        : defaultDurationMinutes;
 
     const availabilities = durationData?.availabilities ?? [];
 
     for (const slot of availabilities) {
-      const startMs = slot.startMillisUtc;
-      const endMs = slot.endMillisUtc;
+      const startMs =
+        slot.startMillisUtc ??
+        (slot as { start?: number }).start ??
+        (slot as { startTime?: number }).startTime;
+      const endMs =
+        slot.endMillisUtc ??
+        (slot as { end?: number }).end ??
+        (slot as { endTime?: number }).endTime;
 
       if (startMs === undefined || endMs === undefined) continue;
 
@@ -117,33 +134,90 @@ function parseAvailabilityResponse(
   return slots;
 }
 
+async function fetchAvailabilityPage(
+  slug: string,
+  timezone: string,
+  monthOffset: number
+): Promise<{ ok: boolean; data: HubSpotAvailabilityPageResponse | null; errorText?: string }> {
+  const params = new URLSearchParams({ timezone, monthOffset: String(monthOffset) });
+  const result = await hubspotFetch<HubSpotAvailabilityPageResponse>(
+    `${schedulerPath("book/availability-page", slug)}?${params.toString()}`
+  );
+
+  return {
+    ok: result.ok,
+    data: result.data,
+    errorText: result.errorText,
+  };
+}
+
+function dedupeSlots(slots: AvailableSlot[]): AvailableSlot[] {
+  const seen = new Set<string>();
+  return slots.filter((slot) => {
+    if (seen.has(slot.startTime)) return false;
+    seen.add(slot.startTime);
+    return true;
+  });
+}
+
 export async function getTourAvailability(
   input: TourAvailabilityInput
 ): Promise<TourAvailabilityResult> {
   const env = getEnv();
   const slug = getSlugForTourType(input.tourType);
   const timezone = input.timezone ?? env.DEFAULT_TIMEZONE;
-  const params = new URLSearchParams({ timezone });
-  if (input.monthOffset !== undefined) {
-    params.set("monthOffset", String(input.monthOffset));
+  const monthOffsets =
+    input.monthOffset !== undefined ? [input.monthOffset] : DEFAULT_MONTH_FETCHES;
+
+  const bookingInfoResult = await getBookingInfo(input.tourType, timezone);
+  const rawResponses: unknown[] = [];
+  let slots: AvailableSlot[] = [];
+
+  if (bookingInfoResult.ok && bookingInfoResult.data) {
+    rawResponses.push({ source: "booking-info", data: bookingInfoResult.data });
+    slots.push(
+      ...parseAvailabilityResponse(
+        bookingInfoResult.data,
+        input.tourType,
+        timezone,
+        env.DEFAULT_TOUR_DURATION_MINUTES
+      )
+    );
   }
 
-  const result = await hubspotFetch<HubSpotAvailabilityPageResponse>(
-    `/scheduler/${SCHEDULER_VERSION}/meetings/meeting-links/book/availability-page/${slug}?${params.toString()}`
-  );
-
-  if (!result.ok || !result.data) {
-    return { slots: [], rawResponse: result.data ?? { error: result.errorText } };
+  for (const monthOffset of monthOffsets) {
+    const result = await fetchAvailabilityPage(slug, timezone, monthOffset);
+    if (result.data) {
+      rawResponses.push({ source: "availability-page", monthOffset, data: result.data });
+      slots.push(
+        ...parseAvailabilityResponse(
+          result.data,
+          input.tourType,
+          timezone,
+          env.DEFAULT_TOUR_DURATION_MINUTES
+        )
+      );
+    } else if (!result.ok) {
+      rawResponses.push({
+        source: "availability-page",
+        monthOffset,
+        error: result.errorText,
+      });
+    }
   }
 
-  const slots = parseAvailabilityResponse(
-    result.data,
-    input.tourType,
-    timezone,
-    env.DEFAULT_TOUR_DURATION_MINUTES
-  );
+  slots = dedupeSlots(slots);
 
-  return { slots, rawResponse: result.data };
+  if (slots.length === 0) {
+    logger.warn("No HubSpot slots parsed", {
+      tourType: input.tourType,
+      slug,
+      timezone,
+      monthOffsets,
+    });
+  }
+
+  return { slots, rawResponse: rawResponses };
 }
 
 export async function getBookingInfo(
@@ -154,7 +228,7 @@ export async function getBookingInfo(
   const params = new URLSearchParams({ timezone });
 
   const result = await hubspotFetch<HubSpotBookingInfo>(
-    `/scheduler/${SCHEDULER_VERSION}/meetings/meeting-links/book/${slug}?${params.toString()}`
+    `${schedulerPath("book", slug)}?${params.toString()}`
   );
 
   if (!result.ok) {
@@ -341,6 +415,8 @@ export function buildDealUpdateProperties(input: {
   };
 }
 
+export { filterSlotsByPreference } from "./slotPreferences.js";
+
 export function getMeetingUrl(tourType: TourType): string {
   return getMeetingUrlForTourType(tourType);
 }
@@ -355,33 +431,4 @@ export function formatDisplayTimeMadrid(isoTime: string): string {
     minute: "2-digit",
     hour12: false,
   }).format(new Date(isoTime));
-}
-
-export function filterSlotsByPreference(
-  slots: AvailableSlot[],
-  preferredDay?: string,
-  preferredTime?: string,
-  limit = 5
-): AvailableSlot[] {
-  let filtered = [...slots];
-
-  if (preferredDay) {
-    const dayLower = preferredDay.toLowerCase();
-    filtered = filtered.filter((slot) => {
-      const dayName = new Intl.DateTimeFormat("en-US", {
-        timeZone: "Europe/Madrid",
-        weekday: "long",
-      })
-        .format(new Date(slot.startTime))
-        .toLowerCase();
-      const dateStr = slot.startTime.slice(0, 10);
-      return dayName.includes(dayLower) || dateStr.includes(dayLower) || slot.startTime.includes(dayLower);
-    });
-  }
-
-  if (filtered.length === 0) {
-    filtered = [...slots];
-  }
-
-  return filtered.slice(0, limit);
 }
