@@ -35,6 +35,7 @@ async function handleMcpPost(req: Request, res: Response): Promise<void> {
     } else if (!sessionId && isMcpInitializeRequest(req.body)) {
       transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
+        enableJsonResponse: true,
         onsessioninitialized: (newSessionId) => {
           mcpTransports.set(newSessionId, transport);
           logger.info("MCP session initialized", { sessionId: newSessionId });
