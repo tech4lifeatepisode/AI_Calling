@@ -235,7 +235,9 @@ Syncs deals where **`ai_call_attempted` = true** into `retell_sessions`, linked 
 
 1. Deal property in `HUBSPOT_RETELL_CALL_ID_PROPERTIES` (default: `retell_call_id`, `retell_session_id`, `ai_retell_call_id`)
 2. Retell call `metadata.hubspot_deal_id`
-3. Most recent ended Retell call to the deal's associated contact phone
+3. All syncable Retell calls to the deal's associated contact phone (connected **and** failed dials: `dial_no_answer`, `dial_busy`, `telephony_provider_permission_denied`)
+
+Failed attempts are stored with `end_reason` = the Retell disconnection reason and `session_outcome` = `failed_dial`.
 
 **One-time historical backfill (local or Render shell):**
 

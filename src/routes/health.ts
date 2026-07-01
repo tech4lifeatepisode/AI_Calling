@@ -5,7 +5,7 @@ export function healthHandler(_req: Request, res: Response): void {
   res.json({
     ok: true,
     service: getServiceName(),
-    syncVersion: "20260701-hubspot-enrichment",
+    syncVersion: "20260701-failed-dial-sync",
     time: new Date().toISOString(),
   });
 }

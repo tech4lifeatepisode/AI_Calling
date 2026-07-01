@@ -24,6 +24,10 @@ const envSchema = z.object({
   HUBSPOT_DEAL_CONTRACT_START_PROPERTY: z.string().default("desired_check_in_date"),
   HUBSPOT_DEAL_CONTRACT_END_PROPERTY: z.string().default("desired_check_out_date"),
   HUBSPOT_DEAL_PIPELINE_LABEL: z.string().default("Hubs B2C - Carabanchel"),
+  RETELL_SYNC_CALL_STATUSES: z.string().default("ended,not_connected"),
+  RETELL_SYNC_FAILED_DISCONNECTION_REASONS: z
+    .string()
+    .default("dial_no_answer,dial_busy,telephony_provider_permission_denied,dial_failed"),
   SYNC_ENABLED: z
     .enum(["true", "false"])
     .default("false")

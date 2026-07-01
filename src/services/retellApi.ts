@@ -1,6 +1,13 @@
 import type { RetellCallSummary, RetellListCallsResponse } from "../types/retellApi.js";
 import type { RetellSessionRow } from "../types/supabase.js";
 import { getEnv, requireRetellApiKey } from "./env.js";
+import {
+  dedupeCallsById,
+  getSyncCallStatuses,
+  isFailedDialCall,
+  isSyncableRetellCall,
+  sortCallsByRecency,
+} from "./retellCallFilters.js";
 import { logger } from "./logger.js";
 
 async function retellFetch<T>(
@@ -136,9 +143,9 @@ export async function findRetellCallsByPhone(phone: string): Promise<RetellCallS
   for (const { field, filter } of buildPhoneSearchFilters(phone)) {
     const body = {
       sort_order: "descending",
-      limit: 5,
+      limit: 20,
       filter_criteria: {
-        call_status: buildEnumFilter(["ended"]),
+        call_status: buildEnumFilter(getSyncCallStatuses()),
         [field]: filter,
       },
     };
@@ -157,16 +164,14 @@ export async function findRetellCallsByPhone(phone: string): Promise<RetellCallS
     }
 
     for (const call of result.data?.items ?? []) {
+      if (!isSyncableRetellCall(call)) continue;
       if (seen.has(call.call_id)) continue;
       seen.add(call.call_id);
       matches.push(call);
     }
-
-    if (matches.length > 0) break;
   }
 
-  matches.sort((a, b) => (b.start_timestamp ?? 0) - (a.start_timestamp ?? 0));
-  return matches;
+  return sortCallsByRecency(matches);
 }
 
 export async function listRetellCalls(options?: {
@@ -175,10 +180,11 @@ export async function listRetellCalls(options?: {
 }): Promise<RetellCallSummary[]> {
   const calls: RetellCallSummary[] = [];
   let paginationKey: string | undefined;
+  const callStatuses = options?.callStatus ?? getSyncCallStatuses();
 
   do {
     const filterCriteria: Record<string, unknown> = {
-      call_status: buildEnumFilter(options?.callStatus ?? ["ended"]),
+      call_status: buildEnumFilter(callStatuses),
     };
 
     if (options?.startAfterMs !== undefined) {
@@ -211,10 +217,11 @@ export async function listRetellCalls(options?: {
       pageSize: result.data.items?.length ?? 0,
       totalSoFar: calls.length,
       hasMore: Boolean(result.data.has_more),
+      callStatuses,
     });
   } while (paginationKey);
 
-  return calls;
+  return dedupeCallsById(calls.filter(isSyncableRetellCall));
 }
 
 export async function getRetellCall(callId: string): Promise<RetellCallSummary | null> {
@@ -257,7 +264,11 @@ export function retellCallToSessionRow(
     from_number: call.from_number ?? null,
     to_number: call.to_number ?? null,
     direction: call.direction ?? null,
-    session_outcome: call.call_analysis?.call_successful === true ? "successful" : null,
+    session_outcome: isFailedDialCall(call)
+      ? "failed_dial"
+      : call.call_analysis?.call_successful === true
+        ? "successful"
+        : null,
     end_to_end_latency_ms: e2eLatency,
     recording_url: call.recording_url ?? null,
     scrubbed_recording_url: call.scrubbed_recording_url ?? null,
@@ -280,6 +291,8 @@ export function buildCallIndexes(calls: RetellCallSummary[]): {
   const byPhone = new Map<string, RetellCallSummary[]>();
 
   for (const call of calls) {
+    if (!isSyncableRetellCall(call)) continue;
+
     byCallId.set(call.call_id, call);
 
     const metadataDealId = call.metadata?.hubspot_deal_id ?? call.metadata?.hubspotDealId;
@@ -305,30 +318,53 @@ export function buildCallIndexes(calls: RetellCallSummary[]): {
   return { byCallId, byDealId, byPhone };
 }
 
+export function findCallsForDeal(
+  dealId: string,
+  dealCallId: string | null,
+  contactPhone: string | null,
+  indexes: ReturnType<typeof buildCallIndexes>
+): RetellCallSummary[] {
+  const matches: RetellCallSummary[] = [];
+
+  if (dealCallId && indexes.byCallId.has(dealCallId)) {
+    const call = indexes.byCallId.get(dealCallId);
+    if (call && isSyncableRetellCall(call)) {
+      matches.push(call);
+    }
+  }
+
+  const byMetadata = indexes.byDealId.get(dealId);
+  if (byMetadata && isSyncableRetellCall(byMetadata)) {
+    matches.push(byMetadata);
+  }
+
+  if (contactPhone) {
+    for (const key of phoneMatchKeys(contactPhone)) {
+      for (const call of indexes.byPhone.get(key) ?? []) {
+        if (isSyncableRetellCall(call)) {
+          matches.push(call);
+        }
+      }
+    }
+
+    for (const [phone, calls] of indexes.byPhone.entries()) {
+      if (!phonesMatch(contactPhone, phone)) continue;
+      for (const call of calls) {
+        if (isSyncableRetellCall(call)) {
+          matches.push(call);
+        }
+      }
+    }
+  }
+
+  return sortCallsByRecency(dedupeCallsById(matches));
+}
+
 export function findCallForDeal(
   dealId: string,
   dealCallId: string | null,
   contactPhone: string | null,
   indexes: ReturnType<typeof buildCallIndexes>
 ): RetellCallSummary | null {
-  if (dealCallId && indexes.byCallId.has(dealCallId)) {
-    return indexes.byCallId.get(dealCallId) ?? null;
-  }
-
-  const byMetadata = indexes.byDealId.get(dealId);
-  if (byMetadata) return byMetadata;
-
-  if (!contactPhone) return null;
-
-  for (const key of phoneMatchKeys(contactPhone)) {
-    const calls = indexes.byPhone.get(key);
-    if (calls?.[0]) return calls[0];
-  }
-
-  for (const [phone, calls] of indexes.byPhone.entries()) {
-    if (!phonesMatch(contactPhone, phone)) continue;
-    return calls[0] ?? null;
-  }
-
-  return null;
+  return findCallsForDeal(dealId, dealCallId, contactPhone, indexes)[0] ?? null;
 }

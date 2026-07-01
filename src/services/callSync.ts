@@ -13,12 +13,13 @@ import {
 import { logger } from "./logger.js";
 import {
   buildCallIndexes,
-  findCallForDeal,
+  findCallsForDeal,
   findRetellCallsByPhone,
   getRetellCall,
   listRetellCalls,
   retellCallToSessionRow,
 } from "./retellApi.js";
+import { dedupeCallsById, getSyncCallStatuses, isFailedDialCall } from "./retellCallFilters.js";
 import {
   getLastSuccessfulSyncTime,
   insertSyncRun,
@@ -54,7 +55,9 @@ async function upsertDealCall(
   enrichment: HubSpotDealEnrichment,
   hydrateTranscripts: boolean
 ): Promise<{ upserted: boolean; error?: string }> {
-  const call = hydrateTranscripts
+  const shouldHydrate =
+    hydrateTranscripts && callSummary.call_status === "ended" && !isFailedDialCall(callSummary);
+  const call = shouldHydrate
     ? (await getRetellCall(callSummary.call_id)) ?? callSummary
     : callSummary;
 
@@ -116,9 +119,9 @@ export async function runCallSync(options: CallSyncOptions = {}): Promise<CallSy
 
     const retellCalls = await listRetellCalls(
       options.full || !modifiedSince
-        ? { callStatus: ["ended"] }
+        ? { callStatus: getSyncCallStatuses() }
         : {
-            callStatus: ["ended"],
+            callStatus: getSyncCallStatuses(),
             startAfterMs: modifiedSince!.getTime() - SYNC_OVERLAP_MS,
           }
     );
@@ -141,40 +144,43 @@ export async function runCallSync(options: CallSyncOptions = {}): Promise<CallSy
         const contactPhone = contact?.phone ?? null;
         const enrichment = await buildDealEnrichment(deal, contact);
 
-        let matchedCall = findCallForDeal(
+        let matchedCalls = findCallsForDeal(
           deal.id,
           dealCallId,
           contactPhone,
           indexes
         );
 
-        if (!matchedCall && contactPhone) {
+        if (matchedCalls.length === 0 && contactPhone) {
           if (options.full) {
             await sleep(PHONE_LOOKUP_DELAY_MS);
           }
-          const phoneMatches = await findRetellCallsByPhone(contactPhone);
-          matchedCall = phoneMatches[0] ?? null;
+          matchedCalls = await findRetellCallsByPhone(contactPhone);
         }
 
-        if (!matchedCall) {
+        matchedCalls = dedupeCallsById(matchedCalls);
+
+        if (matchedCalls.length === 0) {
           const reason = !contactPhone && !dealCallId ? "no_contact_phone_or_call_id" : "no_retell_call_match";
           recordSkip(reason);
           continue;
         }
 
-        const upsertResult = await upsertDealCall(
-          deal,
-          matchedCall,
-          enrichment,
-          hydrateTranscripts
-        );
+        for (const matchedCall of matchedCalls) {
+          const upsertResult = await upsertDealCall(
+            deal,
+            matchedCall,
+            enrichment,
+            hydrateTranscripts
+          );
 
-        if (upsertResult.upserted) {
-          result.sessionsUpserted += 1;
-        } else {
-          recordSkip("upsert_failed");
-          if (upsertResult.error) {
-            result.errors.push({ dealId: deal.id, error: upsertResult.error });
+          if (upsertResult.upserted) {
+            result.sessionsUpserted += 1;
+          } else {
+            recordSkip("upsert_failed");
+            if (upsertResult.error) {
+              result.errors.push({ dealId: deal.id, error: upsertResult.error });
+            }
           }
         }
       } catch (err) {
