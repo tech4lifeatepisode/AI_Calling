@@ -3,6 +3,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { requireBearerAuth } from "./services/auth.js";
 import { healthHandler } from "./routes/health.js";
 import { retellWebhookHandler } from "./routes/retellWebhook.js";
+import { syncCallDataHandler } from "./routes/syncCallData.js";
 import { sanitizeMcpRequestBody } from "./mcp/sanitizeToolInput.js";
 import { createMcpServer } from "./mcp/tools.js";
 import { logger } from "./services/logger.js";
@@ -58,6 +59,10 @@ export function createApp(): Express {
 
   app.post("/webhooks/retell", requireBearerAuth, (req, res) => {
     void retellWebhookHandler(req, res);
+  });
+
+  app.post("/cron/sync-call-data", requireBearerAuth, (req, res) => {
+    void syncCallDataHandler(req, res);
   });
 
   app.post("/mcp", requireBearerAuth, (req, res) => {

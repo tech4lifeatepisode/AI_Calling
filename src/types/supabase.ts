@@ -24,7 +24,22 @@ export interface RetellSessionRow {
   transcript?: string | null;
   transcript_with_tool_calls?: string | null;
   scrubbed_transcript_with_tool_calls?: string | null;
+  hubspot_deal_id?: string | null;
   raw_payload?: Record<string, unknown> | null;
+}
+
+export interface SyncRunRow {
+  id?: string;
+  created_at?: string;
+  completed_at?: string | null;
+  sync_type: string;
+  status: string;
+  deals_processed?: number;
+  sessions_upserted?: number;
+  sessions_skipped?: number;
+  error_count?: number;
+  errors?: Array<{ dealId?: string; error: string }> | null;
+  metadata?: Record<string, unknown> | null;
 }
 
 export interface McpToolCallRow {

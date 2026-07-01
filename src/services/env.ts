@@ -14,6 +14,18 @@ const envSchema = z.object({
   HUBSPOT_IN_PERSON_SLUG: z.string().min(1),
   HUBSPOT_VIRTUAL_SLUG: z.string().min(1),
   DEFAULT_TOUR_DURATION_MINUTES: z.coerce.number().default(30),
+  RETELL_API_KEY: z.string().min(1).optional(),
+  RETELL_API_BASE: z.string().url().default("https://api.retellai.com"),
+  HUBSPOT_AI_CALL_ATTEMPTED_PROPERTY: z.string().default("ai_call_attempted"),
+  HUBSPOT_RETELL_CALL_ID_PROPERTIES: z
+    .string()
+    .default("retell_call_id,retell_session_id,ai_retell_call_id"),
+  SYNC_ENABLED: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((v) => v === "true"),
+  SYNC_INTERVAL_MS: z.coerce.number().default(3_600_000),
+  SYNC_INITIAL_DELAY_MS: z.coerce.number().default(60_000),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -36,4 +48,12 @@ export function getEnv(): Env {
 
 export function resetEnvCache(): void {
   cachedEnv = null;
+}
+
+export function requireRetellApiKey(): string {
+  const key = getEnv().RETELL_API_KEY;
+  if (!key) {
+    throw new Error("RETELL_API_KEY is required for call sync");
+  }
+  return key;
 }

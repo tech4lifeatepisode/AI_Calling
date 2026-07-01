@@ -9,7 +9,8 @@
     "build": "tsc",
     "start": "tsx src/index.ts",
     "lint": "tsc --noEmit",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "backfill:calls": "tsx scripts/backfillCallSync.ts"
   },
   "engines": {
     "node": ">=20 <=22"

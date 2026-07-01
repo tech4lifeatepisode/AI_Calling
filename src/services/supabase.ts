@@ -2,6 +2,7 @@ import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import type {
   McpToolCallRow,
   RetellSessionRow,
+  SyncRunRow,
   TourBookingRow,
 } from "../types/supabase.js";
 import { getEnv } from "./env.js";
@@ -107,5 +108,72 @@ export async function updateTourBooking(
     const message = err instanceof Error ? err.message : String(err);
     logger.error("Supabase updateTourBooking exception", { message });
     return { success: false, error: message };
+  }
+}
+
+export async function insertSyncRun(
+  data: SyncRunRow
+): Promise<{ id?: string; error?: string }> {
+  try {
+    const { data: inserted, error } = await getClient()
+      .from("sync_runs")
+      .insert(data)
+      .select("id")
+      .single();
+
+    if (error) {
+      logger.error("Supabase insertSyncRun failed", { message: error.message });
+      return { error: error.message };
+    }
+
+    return { id: inserted?.id };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.error("Supabase insertSyncRun exception", { message });
+    return { error: message };
+  }
+}
+
+export async function updateSyncRun(
+  id: string,
+  data: Partial<SyncRunRow>
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { error } = await getClient().from("sync_runs").update(data).eq("id", id);
+
+    if (error) {
+      logger.error("Supabase updateSyncRun failed", { message: error.message });
+      return { success: false, error: error.message };
+    }
+
+    return { success: true };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.error("Supabase updateSyncRun exception", { message });
+    return { success: false, error: message };
+  }
+}
+
+export async function getLastSuccessfulSyncTime(): Promise<Date | null> {
+  try {
+    const { data, error } = await getClient()
+      .from("sync_runs")
+      .select("completed_at")
+      .eq("status", "success")
+      .order("completed_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      logger.warn("Supabase getLastSuccessfulSyncTime failed", { message: error.message });
+      return null;
+    }
+
+    if (!data?.completed_at) return null;
+    return new Date(data.completed_at);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.warn("Supabase getLastSuccessfulSyncTime exception", { message });
+    return null;
   }
 }

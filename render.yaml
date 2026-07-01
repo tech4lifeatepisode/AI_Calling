@@ -11,3 +11,39 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      - key: HUBSPOT_API_BASE
+        value: https://api.hubapi.com
+      - key: DEFAULT_TIMEZONE
+        value: Europe/Madrid
+      - key: DEFAULT_TOUR_DURATION_MINUTES
+        value: "30"
+      - key: RETELL_API_BASE
+        value: https://api.retellai.com
+      - key: HUBSPOT_AI_CALL_ATTEMPTED_PROPERTY
+        value: ai_call_attempted
+      - key: HUBSPOT_RETELL_CALL_ID_PROPERTIES
+        value: retell_call_id,retell_session_id,ai_retell_call_id
+      - key: SYNC_ENABLED
+        value: "true"
+      - key: SYNC_INTERVAL_MS
+        value: "3600000"
+      - key: SYNC_INITIAL_DELAY_MS
+        value: "60000"
+      - key: MCP_SERVER_SECRET
+        sync: false
+      - key: HUBSPOT_ACCESS_TOKEN
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: HUBSPOT_IN_PERSON_MEETING_URL
+        sync: false
+      - key: HUBSPOT_VIRTUAL_MEETING_URL
+        sync: false
+      - key: HUBSPOT_IN_PERSON_SLUG
+        sync: false
+      - key: HUBSPOT_VIRTUAL_SLUG
+        sync: false
+      - key: RETELL_API_KEY
+        sync: false

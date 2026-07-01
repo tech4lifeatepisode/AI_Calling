@@ -28,10 +28,12 @@ CREATE TABLE IF NOT EXISTS retell_sessions (
   transcript text NULL,
   transcript_with_tool_calls text NULL,
   scrubbed_transcript_with_tool_calls text NULL,
+  hubspot_deal_id text NULL,
   raw_payload jsonb NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_retell_sessions_session_id ON retell_sessions (session_id);
+CREATE INDEX IF NOT EXISTS idx_retell_sessions_hubspot_deal_id ON retell_sessions (hubspot_deal_id);
 
 -- B. mcp_tool_calls
 CREATE TABLE IF NOT EXISTS mcp_tool_calls (
@@ -78,6 +80,23 @@ CREATE TABLE IF NOT EXISTS tour_bookings (
 CREATE INDEX IF NOT EXISTS idx_tour_bookings_session_id ON tour_bookings (session_id);
 CREATE INDEX IF NOT EXISTS idx_tour_bookings_hubspot_contact_id ON tour_bookings (hubspot_contact_id);
 CREATE INDEX IF NOT EXISTS idx_tour_bookings_hubspot_deal_id ON tour_bookings (hubspot_deal_id);
+
+-- D. sync_runs — audit log for HubSpot deal → Retell call sync jobs
+CREATE TABLE IF NOT EXISTS sync_runs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  completed_at timestamptz NULL,
+  sync_type text NOT NULL,
+  status text NOT NULL,
+  deals_processed integer NOT NULL DEFAULT 0,
+  sessions_upserted integer NOT NULL DEFAULT 0,
+  sessions_skipped integer NOT NULL DEFAULT 0,
+  error_count integer NOT NULL DEFAULT 0,
+  errors jsonb NULL,
+  metadata jsonb NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_sync_runs_created_at ON sync_runs (created_at DESC);
 
 -- Auto-update updated_at on retell_sessions
 CREATE OR REPLACE FUNCTION update_updated_at_column()

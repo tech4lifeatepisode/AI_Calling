@@ -4,6 +4,7 @@ const SECRET_KEYS = [
   "MCP_SERVER_SECRET",
   "HUBSPOT_ACCESS_TOKEN",
   "SUPABASE_SERVICE_ROLE_KEY",
+  "RETELL_API_KEY",
   "Authorization",
   "authorization",
 ];
@@ -17,6 +18,7 @@ function scrubValue(key: string, value: unknown): unknown {
     process.env.MCP_SERVER_SECRET,
     process.env.HUBSPOT_ACCESS_TOKEN,
     process.env.SUPABASE_SERVICE_ROLE_KEY,
+    process.env.RETELL_API_KEY,
   ]) {
     if (secret && value.includes(secret)) {
       return "[REDACTED]";

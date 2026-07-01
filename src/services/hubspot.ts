@@ -37,7 +37,7 @@ function getMeetingUrlForTourType(tourType: TourType): string {
     : env.HUBSPOT_IN_PERSON_MEETING_URL;
 }
 
-async function hubspotFetch<T>(
+export async function hubspotFetch<T>(
   path: string,
   options: RequestInit = {}
 ): Promise<{ ok: boolean; status: number; data: T | null; errorText?: string }> {

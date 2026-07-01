@@ -22,6 +22,7 @@ Retell call → Render MCP server → HubSpot Scheduler API + CRM → Supabase l
 | `GET /health` | No | Render health check |
 | `POST /mcp` | Bearer | MCP Streamable HTTP endpoint for Retell |
 | `POST /webhooks/retell` | Bearer | Retell post-call webhook → Supabase |
+| `POST /cron/sync-call-data` | Bearer | HubSpot deals (`ai_call_attempted=true`) → Retell calls → Supabase |
 
 ---
 
@@ -64,6 +65,13 @@ Use these **exact names** locally (`.env`) and in Render (**Dashboard → Web Se
 | `HUBSPOT_IN_PERSON_SLUG` | `info-madrid` |
 | `HUBSPOT_VIRTUAL_SLUG` | `info-madrid/virtual-tour-booking-carabanchel` |
 | `DEFAULT_TOUR_DURATION_MINUTES` | `30` |
+| `RETELL_API_KEY` | Retell API key (required for call sync) |
+| `RETELL_API_BASE` | `https://api.retellai.com` |
+| `HUBSPOT_AI_CALL_ATTEMPTED_PROPERTY` | `ai_call_attempted` |
+| `HUBSPOT_RETELL_CALL_ID_PROPERTIES` | Comma-separated deal properties that store a Retell call id |
+| `SYNC_ENABLED` | `true` to run incremental sync on an interval inside the web service |
+| `SYNC_INTERVAL_MS` | `3600000` (1 hour) when `SYNC_ENABLED=true` |
+| `SYNC_INITIAL_DELAY_MS` | `60000` — delay before the first incremental run after server start |
 
 **Where to get secrets**
 
@@ -86,6 +94,7 @@ The **Retell Connection** private app needs:
 - `crm.objects.deals.write`
 - `crm.objects.deals.read`
 - `crm.schemas.deals.read`
+- `crm.objects.contacts.read` (contact phone lookup during call sync)
 - `crm.schemas.contacts.read`
 - `crm.objects.owners.read`
 - `automation`
@@ -189,11 +198,60 @@ RUN_BOOKING_TEST=true TEST_BOOKING_EMAIL=you@example.com npx tsx scripts/testBoo
 
 ## Supabase tables
 
-- `retell_sessions` — Retell call/session metadata (upsert by `session_id`)
+- `retell_sessions` — Retell call/session metadata (upsert by `session_id`, includes `hubspot_deal_id`)
 - `mcp_tool_calls` — MCP tool request/response logs
 - `tour_bookings` — Tour bookings and preferences
+- `sync_runs` — Audit log for HubSpot deal → Retell call sync jobs
 
-See [`supabase/schema.sql`](supabase/schema.sql) for full schema.
+See [`supabase/schema.sql`](supabase/schema.sql) for full schema. Existing projects should also run [`supabase/migrations/20260701_call_sync.sql`](supabase/migrations/20260701_call_sync.sql).
+
+---
+
+## HubSpot deal → Retell call sync
+
+Syncs deals where **`ai_call_attempted` = true** into `retell_sessions`, linked by `hubspot_deal_id`.
+
+**Matching order (first hit wins):**
+
+1. Deal property in `HUBSPOT_RETELL_CALL_ID_PROPERTIES` (default: `retell_call_id`, `retell_session_id`, `ai_retell_call_id`)
+2. Retell call `metadata.hubspot_deal_id`
+3. Most recent ended Retell call to the deal's associated contact phone
+
+**One-time historical backfill (local or Render shell):**
+
+```bash
+npm run backfill:calls
+```
+
+**Ongoing sync — option A: Render Cron Job (recommended)**
+
+| Setting | Value |
+|---------|-------|
+| Schedule | `0 * * * *` (hourly) |
+| URL | `POST https://ai-calling-j1hu.onrender.com/cron/sync-call-data` |
+| Header | `Authorization: Bearer <MCP_SERVER_SECRET>` |
+
+**Ongoing sync — Option B: in-process scheduler (active in `render.yaml`)**
+
+Set on the Render web service:
+
+| Variable | Value |
+|----------|-------|
+| `SYNC_ENABLED` | `true` |
+| `SYNC_INTERVAL_MS` | `3600000` |
+| `SYNC_INITIAL_DELAY_MS` | `60000` |
+| `RETELL_API_KEY` | Your Retell API key |
+
+The server runs an incremental sync ~60s after startup, then every hour. Only deals modified since the last successful sync are re-processed (24h overlap buffer). Overlapping runs are skipped if a previous sync is still in progress.
+
+Redeploy after changing environment variables in Render (**Manual Deploy** if needed).
+
+**Manual full re-sync:**
+
+```bash
+curl -X POST "https://ai-calling-j1hu.onrender.com/cron/sync-call-data?full=true" \
+  -H "Authorization: Bearer <MCP_SERVER_SECRET>"
+```
 
 ---
 

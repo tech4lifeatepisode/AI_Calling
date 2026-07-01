@@ -29,6 +29,7 @@ const FIELD_ALIASES: Record<keyof Omit<RetellSessionRow, "id" | "created_at" | "
     "Scrubbed Transcript With Tool Calls",
     "scrubbed_transcript_with_tool_calls",
   ],
+  hubspot_deal_id: ["hubspotDealId", "hubspot_deal_id", "HubSpot Deal ID"],
 };
 
 function getNestedValue(obj: RetellPayload, path: string[]): unknown {
@@ -118,6 +119,7 @@ export function normalizeRetellSession(payload: RetellPayload): RetellSessionRow
     scrubbed_transcript_with_tool_calls: toStringOrNull(
       findValue(payload, FIELD_ALIASES.scrubbed_transcript_with_tool_calls)
     ),
+    hubspot_deal_id: toStringOrNull(findValue(payload, FIELD_ALIASES.hubspot_deal_id)),
     raw_payload: payload,
   };
 
