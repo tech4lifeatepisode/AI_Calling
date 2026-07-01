@@ -76,8 +76,8 @@ export function createMcpServer(): McpServer {
 
         const filtered = filterSlotsByPreference(
           slots,
-          parsed.preferredDay,
-          parsed.preferredTime,
+          parsed.preferredDay ?? undefined,
+          parsed.preferredTime ?? undefined,
           5
         );
 
@@ -102,7 +102,7 @@ export function createMcpServer(): McpServer {
 
         await logToolCall({
           toolName: "get_tour_availability",
-          sessionId: parsed.sessionId,
+          sessionId: parsed.sessionId ?? undefined,
           status: "success",
           request: parsed,
           response: {
@@ -127,7 +127,7 @@ export function createMcpServer(): McpServer {
 
         await logToolCall({
           toolName: "get_tour_availability",
-          sessionId: parsed.sessionId,
+          sessionId: parsed.sessionId ?? undefined,
           status: "error",
           request: parsed,
           response,

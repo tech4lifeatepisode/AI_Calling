@@ -6,9 +6,10 @@ export const getTourAvailabilityInputSchema = z.object({
   tourType: tourTypeSchema,
   timezone: z.string().optional(),
   monthOffset: z.number().int().min(0).optional(),
-  preferredDay: z.string().optional(),
-  preferredTime: z.string().optional(),
-  sessionId: z.string().optional(),
+  preferredDay: z.string().nullable().optional(),
+  preferredTime: z.string().nullable().optional(),
+  sessionId: z.string().nullable().optional(),
+  execution_message: z.string().optional(),
 });
 
 export const bookTourInputSchema = z.object({
