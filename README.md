@@ -103,9 +103,17 @@ The **Retell Connection** private app needs:
 | Health check path | `/health` |
 | Instance | **Starter** recommended (Free tier cold starts can exceed Retell's 20s MCP timeout) |
 
-**Do not use `yarn` or `yarn start`** — this repo uses npm (`package-lock.json`). Using `yarn` alone skips the TypeScript build and causes `Cannot find module dist/index.js`.
+**Do not use `yarn` or `yarn start`** — this repo uses npm (`package-lock.json`). Using `yarn` alone skips the TypeScript build and can resolve incompatible dependency versions.
 
-A [`render.yaml`](render.yaml) is included in the repo with the correct commands.
+**Recommended Render settings:**
+
+| Setting | Value |
+|---------|-------|
+| Build command | `npm ci --include=dev && npm run build` |
+| Start command | `npm start` |
+| Health check path | `/health` |
+
+If Render still uses `yarn` for build, the app will start via `tsx` (commit `1a6921c+`) but you should switch to npm for reliable installs. Node **22** is required (see `.nvmrc`).
 
 Add all environment variables from the table above in **Render → Environment**.
 
