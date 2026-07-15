@@ -1,9 +1,15 @@
 import express, { type Express, type Request, type Response, type NextFunction } from "express";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { requireBearerAuth } from "./services/auth.js";
+import { captureRawBody, requireRetellOrBearerAuth } from "./services/retellAuth.js";
 import { healthHandler } from "./routes/health.js";
 import { retellWebhookHandler } from "./routes/retellWebhook.js";
 import { syncCallDataHandler } from "./routes/syncCallData.js";
+import {
+  checkAvailabilityHandler,
+  getPricingHandler,
+  listSelectableRoomsHandler,
+} from "./routes/retellEpisode.js";
 import { sanitizeMcpRequestBody } from "./mcp/sanitizeToolInput.js";
 import { createMcpServer } from "./mcp/tools.js";
 import { logger } from "./services/logger.js";
@@ -45,7 +51,12 @@ export function createApp(): Express {
   const app = express();
 
   app.disable("x-powered-by");
-  app.use(express.json({ limit: "2mb" }));
+  app.use(
+    express.json({
+      limit: "2mb",
+      verify: captureRawBody,
+    })
+  );
 
   app.use((req: Request, res: Response, next: NextFunction) => {
     const startedAt = Date.now();
@@ -67,6 +78,18 @@ export function createApp(): Express {
 
   app.post("/mcp", requireBearerAuth, (req, res) => {
     void handleMcpPost(req, res);
+  });
+
+  app.post("/retell/list-selectable-rooms", requireRetellOrBearerAuth, (req, res) => {
+    void listSelectableRoomsHandler(req, res);
+  });
+
+  app.post("/retell/check-availability", requireRetellOrBearerAuth, (req, res) => {
+    void checkAvailabilityHandler(req, res);
+  });
+
+  app.post("/retell/get-pricing", requireRetellOrBearerAuth, (req, res) => {
+    void getPricingHandler(req, res);
   });
 
   app.use((_req: Request, res: Response) => {

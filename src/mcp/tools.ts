@@ -1,7 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   bookTourInputSchema,
+  checkRoomAvailabilityInputSchema,
+  getRoomPricingInputSchema,
   getTourAvailabilityInputSchema,
+  listSelectableRoomTypesInputSchema,
   logRetellSessionInputSchema,
   logTourPreferenceInputSchema,
 } from "./schemas.js";
@@ -20,6 +23,11 @@ import {
   normalizeRetellSession,
 } from "../types/retell.js";
 import { getEnv } from "../services/env.js";
+import {
+  checkRoomAvailability,
+  getRoomPricing,
+  listSelectableRooms,
+} from "../services/episodeRoomBooking.js";
 
 function opt(value: string | null | undefined): string | undefined {
   return value ?? undefined;
@@ -430,6 +438,163 @@ export function createMcpServer(): McpServer {
         await logToolCall({
           toolName: "log_tour_preference",
           sessionId: opt(parsed.sessionId),
+          status: "error",
+          request: parsed,
+          response,
+          errorMessage: message,
+          startedAt,
+        });
+
+        return jsonResult(response);
+      }
+    }
+  );
+
+  server.registerTool(
+    "list_selectable_room_types",
+    {
+      description:
+        "Lists room types selectable on booking.episode.life for the given stay dates.",
+      inputSchema: listSelectableRoomTypesInputSchema.shape,
+    },
+    async (input) => {
+      const startedAt = Date.now();
+      const parsed = listSelectableRoomTypesInputSchema.parse(input);
+
+      try {
+        const response = await listSelectableRooms({
+          checkIn: parsed.checkIn,
+          checkOut: parsed.checkOut,
+          sessionId: parsed.sessionId,
+          hubspotDealId: parsed.hubspotDealId,
+          hubspotContactId: parsed.hubspotContactId,
+          requestSource: "mcp",
+        });
+
+        await logToolCall({
+          toolName: "list_selectable_room_types",
+          sessionId: parsed.sessionId,
+          status: "success",
+          request: parsed,
+          response,
+          startedAt,
+        });
+
+        return jsonResult(response);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        const response = { ok: false, error: message, spokenSummary: message };
+
+        await logToolCall({
+          toolName: "list_selectable_room_types",
+          sessionId: parsed.sessionId,
+          status: "error",
+          request: parsed,
+          response,
+          errorMessage: message,
+          startedAt,
+        });
+
+        return jsonResult(response);
+      }
+    }
+  );
+
+  server.registerTool(
+    "check_room_availability",
+    {
+      description:
+        "Checks if a room is selectable on the website and available via Housemonk for the given dates.",
+      inputSchema: checkRoomAvailabilityInputSchema.shape,
+    },
+    async (input) => {
+      const startedAt = Date.now();
+      const parsed = checkRoomAvailabilityInputSchema.parse(input);
+
+      try {
+        const response = await checkRoomAvailability({
+          unitTypeSlug: parsed.unitTypeSlug,
+          checkIn: parsed.checkIn,
+          checkOut: parsed.checkOut,
+          sessionId: parsed.sessionId,
+          hubspotDealId: parsed.hubspotDealId,
+          hubspotContactId: parsed.hubspotContactId,
+          requestSource: "mcp",
+        });
+
+        await logToolCall({
+          toolName: "check_room_availability",
+          sessionId: parsed.sessionId,
+          status: response.ok ? "success" : "error",
+          request: parsed,
+          response,
+          errorMessage: response.ok ? undefined : (response as { error?: string }).error,
+          startedAt,
+        });
+
+        return jsonResult(response);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        const response = { ok: false, error: message, spokenSummary: message };
+
+        await logToolCall({
+          toolName: "check_room_availability",
+          sessionId: parsed.sessionId,
+          status: "error",
+          request: parsed,
+          response,
+          errorMessage: message,
+          startedAt,
+        });
+
+        return jsonResult(response);
+      }
+    }
+  );
+
+  server.registerTool(
+    "get_room_pricing",
+    {
+      description:
+        "Gets live Housemonk pricing for a room after selectability and availability checks.",
+      inputSchema: getRoomPricingInputSchema.shape,
+    },
+    async (input) => {
+      const startedAt = Date.now();
+      const parsed = getRoomPricingInputSchema.parse(input);
+
+      try {
+        const response = await getRoomPricing({
+          unitTypeSlug: parsed.unitTypeSlug,
+          checkIn: parsed.checkIn,
+          checkOut: parsed.checkOut,
+          people: parsed.people,
+          promoCode: parsed.promoCode,
+          paymentOption: parsed.paymentOption,
+          sessionId: parsed.sessionId,
+          hubspotDealId: parsed.hubspotDealId,
+          hubspotContactId: parsed.hubspotContactId,
+          requestSource: "mcp",
+        });
+
+        await logToolCall({
+          toolName: "get_room_pricing",
+          sessionId: parsed.sessionId,
+          status: response.ok ? "success" : "error",
+          request: parsed,
+          response,
+          errorMessage: response.ok ? undefined : (response as { error?: string }).error,
+          startedAt,
+        });
+
+        return jsonResult(response);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        const response = { ok: false, error: message, spokenSummary: message };
+
+        await logToolCall({
+          toolName: "get_room_pricing",
+          sessionId: parsed.sessionId,
           status: "error",
           request: parsed,
           response,

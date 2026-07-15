@@ -1,7 +1,9 @@
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import type {
   McpToolCallRow,
+  RetellSessionPricingUpdate,
   RetellSessionRow,
+  RoomPricingRequestRow,
   SyncRunRow,
   TourBookingRow,
 } from "../types/supabase.js";
@@ -175,5 +177,74 @@ export async function getLastSuccessfulSyncTime(): Promise<Date | null> {
     const message = err instanceof Error ? err.message : String(err);
     logger.warn("Supabase getLastSuccessfulSyncTime exception", { message });
     return null;
+  }
+}
+
+export async function getRetellSessionBySessionId(
+  sessionId: string
+): Promise<RetellSessionRow | null> {
+  try {
+    const { data, error } = await getClient()
+      .from("retell_sessions")
+      .select("*")
+      .eq("session_id", sessionId)
+      .maybeSingle();
+
+    if (error) {
+      logger.warn("Supabase getRetellSessionBySessionId failed", { message: error.message });
+      return null;
+    }
+
+    return (data as RetellSessionRow) ?? null;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.warn("Supabase getRetellSessionBySessionId exception", { message });
+    return null;
+  }
+}
+
+export async function updateRetellSessionPricing(
+  data: RetellSessionPricingUpdate
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { session_id, ...fields } = data;
+    const { error } = await getClient()
+      .from("retell_sessions")
+      .update({ ...fields, updated_at: new Date().toISOString() })
+      .eq("session_id", session_id);
+
+    if (error) {
+      logger.warn("Supabase updateRetellSessionPricing failed", { message: error.message });
+      return { success: false, error: error.message };
+    }
+
+    return { success: true };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.warn("Supabase updateRetellSessionPricing exception", { message });
+    return { success: false, error: message };
+  }
+}
+
+export async function insertRoomPricingRequest(
+  data: RoomPricingRequestRow
+): Promise<{ success: boolean; id?: string; error?: string }> {
+  try {
+    const { data: inserted, error } = await getClient()
+      .from("room_pricing_requests")
+      .insert(data)
+      .select("id")
+      .single();
+
+    if (error) {
+      logger.warn("Supabase insertRoomPricingRequest failed", { message: error.message });
+      return { success: false, error: error.message };
+    }
+
+    return { success: true, id: inserted?.id };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.warn("Supabase insertRoomPricingRequest exception", { message });
+    return { success: false, error: message };
   }
 }

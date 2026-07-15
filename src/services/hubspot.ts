@@ -415,6 +415,37 @@ export function buildDealUpdateProperties(input: {
   };
 }
 
+export interface PricingDealQuoteInput {
+  unitTypeSlug: string;
+  checkIn: string;
+  checkOut: string;
+  monthlyRate?: number;
+  totalDueNow?: number;
+  totalPrice?: number;
+}
+
+export function buildPricingDealUpdateProperties(
+  input: PricingDealQuoteInput
+): Record<string, string> {
+  const env = getEnv();
+  const properties: Record<string, string> = {};
+
+  if (input.monthlyRate !== undefined) {
+    properties[env.HUBSPOT_DEAL_MONTHLY_RATE_PROPERTY] = String(input.monthlyRate);
+  }
+  if (input.totalDueNow !== undefined) {
+    properties[env.HUBSPOT_DEAL_TOTAL_DUE_NOW_PROPERTY] = String(input.totalDueNow);
+  }
+  if (input.totalPrice !== undefined) {
+    properties[env.HUBSPOT_DEAL_TOTAL_PRICE_PROPERTY] = String(input.totalPrice);
+  }
+  properties[env.HUBSPOT_DEAL_QUOTED_UNIT_PROPERTY] = input.unitTypeSlug;
+  properties[env.HUBSPOT_DEAL_QUOTED_CHECKIN_PROPERTY] = input.checkIn;
+  properties[env.HUBSPOT_DEAL_QUOTED_CHECKOUT_PROPERTY] = input.checkOut;
+
+  return properties;
+}
+
 export { filterSlotsByPreference } from "./slotPreferences.js";
 
 export function getMeetingUrl(tourType: TourType): string {

@@ -1,0 +1,67 @@
+-- Episode pricing: retell_sessions snapshot columns + room_pricing_requests audit log
+
+ALTER TABLE retell_sessions
+  ADD COLUMN IF NOT EXISTS latest_unit_type_slug text NULL,
+  ADD COLUMN IF NOT EXISTS latest_check_in date NULL,
+  ADD COLUMN IF NOT EXISTS latest_check_out date NULL,
+  ADD COLUMN IF NOT EXISTS latest_stay_nights integer NULL,
+  ADD COLUMN IF NOT EXISTS latest_people integer NULL,
+  ADD COLUMN IF NOT EXISTS latest_monthly_rate numeric NULL,
+  ADD COLUMN IF NOT EXISTS latest_precio_mensual_display numeric NULL,
+  ADD COLUMN IF NOT EXISTS latest_security_deposit numeric NULL,
+  ADD COLUMN IF NOT EXISTS latest_additional_person_fee numeric NULL,
+  ADD COLUMN IF NOT EXISTS latest_total_due_now numeric NULL,
+  ADD COLUMN IF NOT EXISTS latest_total_due_on_docs numeric NULL,
+  ADD COLUMN IF NOT EXISTS latest_total_rent numeric NULL,
+  ADD COLUMN IF NOT EXISTS latest_total_price numeric NULL,
+  ADD COLUMN IF NOT EXISTS latest_pricing_available boolean NULL,
+  ADD COLUMN IF NOT EXISTS latest_stay_kind text NULL,
+  ADD COLUMN IF NOT EXISTS latest_pricing_data_source text NULL,
+  ADD COLUMN IF NOT EXISTS latest_applied_promo text NULL,
+  ADD COLUMN IF NOT EXISTS latest_pricing_quoted_at timestamptz NULL,
+  ADD COLUMN IF NOT EXISTS latest_pricing_spoken_summary text NULL;
+
+CREATE TABLE IF NOT EXISTS room_pricing_requests (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  session_id text NULL,
+  hubspot_deal_id text NULL,
+  hubspot_contact_id text NULL,
+  hubspot_deal_name text NULL,
+  hubspot_contact_name text NULL,
+  hubspot_contact_email text NULL,
+  unit_type_slug text NULL,
+  display_name text NULL,
+  check_in date NULL,
+  check_out date NULL,
+  nights integer NULL,
+  people integer NULL,
+  promo_code text NULL,
+  payment_option text NULL,
+  selectable_on_website boolean NULL,
+  available boolean NULL,
+  status text NOT NULL,
+  base_monthly_rate numeric NULL,
+  precio_mensual_display numeric NULL,
+  security_deposit numeric NULL,
+  additional_person_fee numeric NULL,
+  total_due_now numeric NULL,
+  total_due_on_docs numeric NULL,
+  total_rent numeric NULL,
+  total_price numeric NULL,
+  stay_kind text NULL,
+  data_source text NULL,
+  applied_promo text NULL,
+  promo_error text NULL,
+  spoken_summary text NULL,
+  request_source text NULL,
+  tool_name text NULL,
+  episode_availability_response jsonb NULL,
+  episode_quote_response jsonb NULL,
+  error_message text NULL,
+  latency_ms numeric NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_room_pricing_requests_session_id ON room_pricing_requests (session_id);
+CREATE INDEX IF NOT EXISTS idx_room_pricing_requests_hubspot_deal_id ON room_pricing_requests (hubspot_deal_id);
+CREATE INDEX IF NOT EXISTS idx_room_pricing_requests_created_at ON room_pricing_requests (created_at DESC);

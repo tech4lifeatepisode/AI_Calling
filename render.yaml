@@ -29,6 +29,24 @@ services:
         value: "3600000"
       - key: SYNC_INITIAL_DELAY_MS
         value: "60000"
+      - key: EPISODE_BACKEND_URL
+        value: https://episode-booking.onrender.com
+      - key: EPISODE_BACKEND_TIMEOUT_MS
+        value: "25000"
+      - key: HUBSPOT_PRICING_DEAL_UPDATE_ENABLED
+        value: "true"
+      - key: HUBSPOT_DEAL_MONTHLY_RATE_PROPERTY
+        value: ai_quoted_monthly_rate
+      - key: HUBSPOT_DEAL_TOTAL_DUE_NOW_PROPERTY
+        value: ai_total_due_now
+      - key: HUBSPOT_DEAL_TOTAL_PRICE_PROPERTY
+        value: ai_total_price
+      - key: HUBSPOT_DEAL_QUOTED_UNIT_PROPERTY
+        value: ai_quoted_unit_type
+      - key: HUBSPOT_DEAL_QUOTED_CHECKIN_PROPERTY
+        value: ai_quoted_check_in
+      - key: HUBSPOT_DEAL_QUOTED_CHECKOUT_PROPERTY
+        value: ai_quoted_check_out
       - key: MCP_SERVER_SECRET
         sync: false
       - key: HUBSPOT_ACCESS_TOKEN

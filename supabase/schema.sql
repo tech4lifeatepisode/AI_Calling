@@ -40,7 +40,26 @@ CREATE TABLE IF NOT EXISTS retell_sessions (
   hubspot_unit_type text NULL,
   hubspot_contract_start_date timestamptz NULL,
   hubspot_contract_end_date timestamptz NULL,
-  raw_payload jsonb NULL
+  raw_payload jsonb NULL,
+  latest_unit_type_slug text NULL,
+  latest_check_in date NULL,
+  latest_check_out date NULL,
+  latest_stay_nights integer NULL,
+  latest_people integer NULL,
+  latest_monthly_rate numeric NULL,
+  latest_precio_mensual_display numeric NULL,
+  latest_security_deposit numeric NULL,
+  latest_additional_person_fee numeric NULL,
+  latest_total_due_now numeric NULL,
+  latest_total_due_on_docs numeric NULL,
+  latest_total_rent numeric NULL,
+  latest_total_price numeric NULL,
+  latest_pricing_available boolean NULL,
+  latest_stay_kind text NULL,
+  latest_pricing_data_source text NULL,
+  latest_applied_promo text NULL,
+  latest_pricing_quoted_at timestamptz NULL,
+  latest_pricing_spoken_summary text NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_retell_sessions_session_id ON retell_sessions (session_id);
@@ -109,6 +128,52 @@ CREATE TABLE IF NOT EXISTS sync_runs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_sync_runs_created_at ON sync_runs (created_at DESC);
+
+-- E. room_pricing_requests — audit log for every pricing quote request
+CREATE TABLE IF NOT EXISTS room_pricing_requests (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  session_id text NULL,
+  hubspot_deal_id text NULL,
+  hubspot_contact_id text NULL,
+  hubspot_deal_name text NULL,
+  hubspot_contact_name text NULL,
+  hubspot_contact_email text NULL,
+  unit_type_slug text NULL,
+  display_name text NULL,
+  check_in date NULL,
+  check_out date NULL,
+  nights integer NULL,
+  people integer NULL,
+  promo_code text NULL,
+  payment_option text NULL,
+  selectable_on_website boolean NULL,
+  available boolean NULL,
+  status text NOT NULL,
+  base_monthly_rate numeric NULL,
+  precio_mensual_display numeric NULL,
+  security_deposit numeric NULL,
+  additional_person_fee numeric NULL,
+  total_due_now numeric NULL,
+  total_due_on_docs numeric NULL,
+  total_rent numeric NULL,
+  total_price numeric NULL,
+  stay_kind text NULL,
+  data_source text NULL,
+  applied_promo text NULL,
+  promo_error text NULL,
+  spoken_summary text NULL,
+  request_source text NULL,
+  tool_name text NULL,
+  episode_availability_response jsonb NULL,
+  episode_quote_response jsonb NULL,
+  error_message text NULL,
+  latency_ms numeric NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_room_pricing_requests_session_id ON room_pricing_requests (session_id);
+CREATE INDEX IF NOT EXISTS idx_room_pricing_requests_hubspot_deal_id ON room_pricing_requests (hubspot_deal_id);
+CREATE INDEX IF NOT EXISTS idx_room_pricing_requests_created_at ON room_pricing_requests (created_at DESC);
 
 -- Auto-update updated_at on retell_sessions
 CREATE OR REPLACE FUNCTION update_updated_at_column()

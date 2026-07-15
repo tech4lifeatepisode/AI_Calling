@@ -10,6 +10,7 @@
     "start": "tsx src/index.ts",
     "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
+    "test": "tsx --test src/**/*.test.ts",
     "backfill:calls": "tsx scripts/backfillCallSync.ts"
   },
   "engines": {

@@ -34,6 +34,18 @@ const envSchema = z.object({
     .transform((v) => v === "true"),
   SYNC_INTERVAL_MS: z.coerce.number().default(3_600_000),
   SYNC_INITIAL_DELAY_MS: z.coerce.number().default(60_000),
+  EPISODE_BACKEND_URL: z.string().url().default("https://episode-booking.onrender.com"),
+  EPISODE_BACKEND_TIMEOUT_MS: z.coerce.number().default(25_000),
+  HUBSPOT_PRICING_DEAL_UPDATE_ENABLED: z
+    .enum(["true", "false"])
+    .default("true")
+    .transform((v) => v === "true"),
+  HUBSPOT_DEAL_MONTHLY_RATE_PROPERTY: z.string().default("ai_quoted_monthly_rate"),
+  HUBSPOT_DEAL_TOTAL_DUE_NOW_PROPERTY: z.string().default("ai_total_due_now"),
+  HUBSPOT_DEAL_TOTAL_PRICE_PROPERTY: z.string().default("ai_total_price"),
+  HUBSPOT_DEAL_QUOTED_UNIT_PROPERTY: z.string().default("ai_quoted_unit_type"),
+  HUBSPOT_DEAL_QUOTED_CHECKIN_PROPERTY: z.string().default("ai_quoted_check_in"),
+  HUBSPOT_DEAL_QUOTED_CHECKOUT_PROPERTY: z.string().default("ai_quoted_check_out"),
 });
 
 export type Env = z.infer<typeof envSchema>;

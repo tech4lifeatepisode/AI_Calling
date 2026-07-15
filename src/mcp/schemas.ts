@@ -68,7 +68,40 @@ export const logTourPreferenceInputSchema = z.object({
   execution_message: z.string().optional(),
 });
 
+const episodeContextFields = {
+  sessionId: z.string().optional(),
+  hubspotContactId: z.string().optional(),
+  hubspotDealId: z.string().optional(),
+  execution_message: z.string().optional(),
+};
+
+export const listSelectableRoomTypesInputSchema = z.object({
+  checkIn: z.string().min(1),
+  checkOut: z.string().min(1),
+  ...episodeContextFields,
+});
+
+export const checkRoomAvailabilityInputSchema = z.object({
+  unitTypeSlug: z.string().min(1),
+  checkIn: z.string().min(1),
+  checkOut: z.string().min(1),
+  ...episodeContextFields,
+});
+
+export const getRoomPricingInputSchema = z.object({
+  unitTypeSlug: z.string().min(1),
+  checkIn: z.string().min(1),
+  checkOut: z.string().min(1),
+  people: z.number().int().min(1).max(2),
+  promoCode: z.string().optional(),
+  paymentOption: z.string().optional(),
+  ...episodeContextFields,
+});
+
 export type GetTourAvailabilityInput = z.infer<typeof getTourAvailabilityInputSchema>;
 export type BookTourInput = z.infer<typeof bookTourInputSchema>;
 export type LogRetellSessionInput = z.infer<typeof logRetellSessionInputSchema>;
 export type LogTourPreferenceInput = z.infer<typeof logTourPreferenceInputSchema>;
+export type ListSelectableRoomTypesInput = z.infer<typeof listSelectableRoomTypesInputSchema>;
+export type CheckRoomAvailabilityInput = z.infer<typeof checkRoomAvailabilityInputSchema>;
+export type GetRoomPricingInput = z.infer<typeof getRoomPricingInputSchema>;
