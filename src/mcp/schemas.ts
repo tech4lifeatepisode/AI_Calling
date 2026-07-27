@@ -18,7 +18,7 @@ export const bookTourInputSchema = z.object({
   startTime: z.string().min(1),
   durationMinutes: z.number().int().positive().optional(),
   timezone: z.string().optional(),
-  email: z.string().email(),
+  email: z.string().email().optional(),
   firstName: z.string().optional(),
   lastName: z.string().optional(),
   phone: z.string().optional(),

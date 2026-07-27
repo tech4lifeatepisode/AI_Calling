@@ -28,6 +28,8 @@ import {
   getRoomPricing,
   listSelectableRooms,
 } from "../services/episodeRoomBooking.js";
+import { resolveGuestContactForBooking } from "../services/guestContactResolver.js";
+import { sendTourBookingNotification } from "../services/tourBookingEmail.js";
 
 function opt(value: string | null | undefined): string | undefined {
   return value ?? undefined;
@@ -179,10 +181,19 @@ export function createMcpServer(): McpServer {
       const startedAt = Date.now();
       const parsed = bookTourInputSchema.parse(input);
 
-      if (!parsed.email) {
+      const resolvedGuest = await resolveGuestContactForBooking({
+        email: opt(parsed.email),
+        firstName: opt(parsed.firstName),
+        lastName: opt(parsed.lastName),
+        phone: opt(parsed.phone),
+        hubspotContactId: opt(parsed.hubspotContactId),
+        hubspotDealId: opt(parsed.hubspotDealId),
+      });
+
+      if (!resolvedGuest.ok) {
         const response = {
           success: false,
-          messageForAgent: "Email is required to book a tour.",
+          messageForAgent: resolvedGuest.error,
           fallbackMessageForAgent:
             "I'm sorry, I couldn't complete the booking right now. I'll send you the tour links by WhatsApp so you can choose the time that works best for you.",
         };
@@ -192,11 +203,13 @@ export function createMcpServer(): McpServer {
           status: "error",
           request: parsed,
           response,
-          errorMessage: "Missing email",
+          errorMessage: resolvedGuest.error,
           startedAt,
         });
         return jsonResult(response);
       }
+
+      const guest = resolvedGuest.guest;
 
       if (!parsed.startTime) {
         const response = {
@@ -230,11 +243,11 @@ export function createMcpServer(): McpServer {
           startTime: parsed.startTime,
           durationMinutes: parsed.durationMinutes,
           timezone: parsed.timezone,
-          email: parsed.email,
-          firstName: opt(parsed.firstName),
-          lastName: opt(parsed.lastName),
-          phone: opt(parsed.phone),
-          hubspotContactId: opt(parsed.hubspotContactId),
+          email: guest.email,
+          firstName: guest.firstName,
+          lastName: guest.lastName,
+          phone: guest.phone,
+          hubspotContactId: guest.hubspotContactId ?? opt(parsed.hubspotContactId),
           hubspotDealId: opt(parsed.hubspotDealId),
           sessionId: opt(parsed.sessionId),
         });
@@ -244,13 +257,13 @@ export function createMcpServer(): McpServer {
         await insertTourBooking({
           session_id: opt(parsed.sessionId) ?? null,
           hubspot_contact_id: bookingResult.success
-            ? bookingResult.contactId ?? opt(parsed.hubspotContactId) ?? null
-            : opt(parsed.hubspotContactId) ?? null,
+            ? bookingResult.contactId ?? guest.hubspotContactId ?? opt(parsed.hubspotContactId) ?? null
+            : guest.hubspotContactId ?? opt(parsed.hubspotContactId) ?? null,
           hubspot_deal_id: opt(parsed.hubspotDealId) ?? null,
-          guest_first_name: opt(parsed.firstName) ?? null,
-          guest_last_name: opt(parsed.lastName) ?? null,
-          guest_email: parsed.email,
-          guest_phone: opt(parsed.phone) ?? null,
+          guest_first_name: guest.firstName ?? null,
+          guest_last_name: guest.lastName ?? null,
+          guest_email: guest.email,
+          guest_phone: guest.phone ?? null,
           tour_type: parsed.tourType,
           timezone: parsed.timezone ?? env.DEFAULT_TIMEZONE,
           scheduled_start_time: bookingResult.success
@@ -279,6 +292,22 @@ export function createMcpServer(): McpServer {
               tourType: parsed.tourType,
               startTime: bookingResult.startTime,
             }),
+          });
+        }
+
+        if (bookingResult.success) {
+          await sendTourBookingNotification({
+            tourType: parsed.tourType,
+            startTime: bookingResult.startTime,
+            timezone: bookingResult.timezone ?? parsed.timezone ?? env.DEFAULT_TIMEZONE,
+            guestEmail: guest.email,
+            guestFirstName: guest.firstName,
+            guestLastName: guest.lastName,
+            hubspotDealId: opt(parsed.hubspotDealId),
+            hubspotContactId:
+              bookingResult.contactId ??
+              guest.hubspotContactId ??
+              opt(parsed.hubspotContactId),
           });
         }
 

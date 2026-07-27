@@ -72,6 +72,15 @@ Use these **exact names** locally (`.env`) and in Render (**Dashboard → Web Se
 | `SYNC_ENABLED` | `true` to run incremental sync on an interval inside the web service |
 | `SYNC_INTERVAL_MS` | `3600000` (1 hour) when `SYNC_ENABLED=true` |
 | `SYNC_INITIAL_DELAY_MS` | `60000` — delay before the first incremental run after server start |
+| `HUBSPOT_PORTAL_ID` | HubSpot portal ID (optional; auto-fetched if omitted) |
+| `TOUR_BOOKING_EMAIL_ENABLED` | `true` to send email after successful `book_tour` |
+| `TOUR_BOOKING_NOTIFY_EMAIL` | Comma-separated notification recipients |
+| `SMTP_HOST` | e.g. `smtp.gmail.com` |
+| `SMTP_PORT` | `587` |
+| `SMTP_SECURE` | `false` for STARTTLS |
+| `SMTP_USER` | SMTP login (e.g. Gmail address) |
+| `SMTP_PASSWORD` | SMTP password or Gmail app password |
+| `SMTP_FROM` | From address (defaults to `SMTP_USER`) |
 
 **Where to get secrets**
 
@@ -166,6 +175,10 @@ When the guest wants a tour:
 9. If booking fails, say: *"No problem, I'll send you the tour links by WhatsApp so you can choose the time that works best for you."*
 10. Log the result with `log_retell_session` or `log_tour_preference`.
 
+**Email for booking:** Cara can pass `hubspotDealId` and/or `hubspotContactId` from Retell dynamic variables instead of asking for email — the middle layer looks up the contact email from HubSpot automatically.
+
+**After a successful booking:** If `TOUR_BOOKING_EMAIL_ENABLED=true`, a React Email notification is sent to `TOUR_BOOKING_NOTIFY_EMAIL` with the tour time plus links to the HubSpot deal and contact records.
+
 ---
 
 ## Manual test scripts
@@ -179,6 +192,9 @@ npx tsx scripts/testSupabaseInsert.ts
 
 # Test live booking (guarded — only runs when enabled)
 RUN_BOOKING_TEST=true TEST_BOOKING_EMAIL=you@example.com npx tsx scripts/testBookTour.ts
+
+# Test tour booking notification email (requires SMTP_PASSWORD)
+SMTP_PASSWORD=your_app_password npx tsx scripts/testTourBookingEmail.ts
 ```
 
 ---

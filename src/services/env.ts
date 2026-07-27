@@ -46,6 +46,21 @@ const envSchema = z.object({
   HUBSPOT_DEAL_QUOTED_UNIT_PROPERTY: z.string().default("ai_quoted_unit_type"),
   HUBSPOT_DEAL_QUOTED_CHECKIN_PROPERTY: z.string().default("ai_quoted_check_in"),
   HUBSPOT_DEAL_QUOTED_CHECKOUT_PROPERTY: z.string().default("ai_quoted_check_out"),
+  HUBSPOT_PORTAL_ID: z.coerce.number().optional(),
+  TOUR_BOOKING_EMAIL_ENABLED: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((v) => v === "true"),
+  TOUR_BOOKING_NOTIFY_EMAIL: z.string().optional(),
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.coerce.number().default(587),
+  SMTP_SECURE: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((v) => v === "true"),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASSWORD: z.string().optional(),
+  SMTP_FROM: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;
