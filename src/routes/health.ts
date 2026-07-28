@@ -20,7 +20,7 @@ export async function healthHandler(_req: Request, res: Response): Promise<void>
   res.json({
     ok: true,
     service: getServiceName(),
-    syncVersion: "20260701-failed-dial-sync",
+    syncVersion: "20260728-notion-sync",
     time: new Date().toISOString(),
     episodeBackend,
     tools: MCP_TOOLS,
