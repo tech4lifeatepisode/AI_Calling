@@ -4,6 +4,7 @@ import { logger } from "./logger.js";
 
 const NOTION_OAUTH_AUTHORIZE_URL = "https://api.notion.com/v1/oauth/authorize";
 const NOTION_OAUTH_TOKEN_URL = "https://api.notion.com/v1/oauth/token";
+const NOTION_API_BASE = "https://api.notion.com/v1";
 
 export interface NotionOAuthTokenResponse {
   access_token: string;
@@ -18,13 +19,16 @@ export interface NotionOAuthTokenResponse {
 
 export interface NotionConnectionStatus {
   connected: boolean;
+  needsReauth?: boolean;
   source?: "oauth_env" | "oauth_memory" | "internal";
   workspaceId?: string;
   workspaceName?: string | null;
   botId?: string;
+  error?: string;
 }
 
 let memoryOAuthToken: NotionOAuthTokenResponse | null = null;
+let refreshTokenInvalid = false;
 
 function requireOAuthClientConfig(): {
   clientId: string;
@@ -133,36 +137,68 @@ export async function refreshNotionAccessToken(
 
 export function rememberOAuthToken(token: NotionOAuthTokenResponse): void {
   memoryOAuthToken = token;
+  refreshTokenInvalid = false;
 }
 
 export function getRememberedOAuthToken(): NotionOAuthTokenResponse | null {
   return memoryOAuthToken;
 }
 
+export async function verifyNotionAccessToken(
+  accessToken: string
+): Promise<{ valid: boolean; error?: string }> {
+  const env = getEnv();
+  const res = await fetch(`${NOTION_API_BASE}/users/me`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Notion-Version": env.NOTION_API_VERSION,
+    },
+  });
+
+  if (res.ok) {
+    return { valid: true };
+  }
+
+  const body = await res.text();
+  return { valid: false, error: `Notion token verify failed (${res.status}): ${body}` };
+}
+
 export async function getNotionConnectionStatus(): Promise<NotionConnectionStatus> {
   const env = getEnv();
+  const accessToken = await resolveNotionAccessToken();
 
-  if (env.NOTION_API_KEY) {
+  if (!accessToken) {
     return {
-      connected: true,
-      source: memoryOAuthToken?.access_token === env.NOTION_API_KEY ? "oauth_env" : "internal",
-      workspaceId: memoryOAuthToken?.workspace_id,
-      workspaceName: memoryOAuthToken?.workspace_name,
-      botId: memoryOAuthToken?.bot_id,
+      connected: false,
+      needsReauth: true,
+      error: "No Notion token configured. Open /auth/notion to authorize.",
     };
   }
 
-  if (memoryOAuthToken?.access_token) {
+  const verification = await verifyNotionAccessToken(accessToken);
+  if (!verification.valid) {
     return {
-      connected: true,
-      source: "oauth_memory",
-      workspaceId: memoryOAuthToken.workspace_id,
-      workspaceName: memoryOAuthToken.workspace_name,
-      botId: memoryOAuthToken.bot_id,
+      connected: false,
+      needsReauth: true,
+      source: env.NOTION_REFRESH_TOKEN ? "oauth_env" : "internal",
+      error: refreshTokenInvalid
+        ? "Notion refresh token is invalid. Re-authorize at /auth/notion and update Render env vars."
+        : verification.error,
     };
   }
 
-  return { connected: false };
+  return {
+    connected: true,
+    source:
+      memoryOAuthToken?.access_token === accessToken
+        ? "oauth_memory"
+        : env.NOTION_REFRESH_TOKEN
+          ? "oauth_env"
+          : "internal",
+    workspaceId: memoryOAuthToken?.workspace_id,
+    workspaceName: memoryOAuthToken?.workspace_name,
+    botId: memoryOAuthToken?.bot_id,
+  };
 }
 
 export async function resolveNotionAccessToken(): Promise<string | null> {
@@ -179,17 +215,18 @@ export async function resolveNotionAccessToken(): Promise<string | null> {
   return null;
 }
 
-export async function refreshStoredNotionTokenIfNeeded(): Promise<string | null> {
+export async function tryRefreshNotionAccessToken(): Promise<string | null> {
   const env = getEnv();
   const refreshToken = env.NOTION_REFRESH_TOKEN ?? memoryOAuthToken?.refresh_token ?? null;
 
-  if (!refreshToken || !env.NOTION_CLIENT_ID || !env.NOTION_CLIENT_SECRET) {
-    return resolveNotionAccessToken();
+  if (refreshTokenInvalid || !refreshToken || !env.NOTION_CLIENT_ID || !env.NOTION_CLIENT_SECRET) {
+    return null;
   }
 
   try {
     const refreshed = await refreshNotionAccessToken(refreshToken);
     rememberOAuthToken(refreshed);
+    applyOAuthTokenToProcessEnv(refreshed);
     logger.info("Notion OAuth token refreshed", {
       workspaceId: refreshed.workspace_id,
       botId: refreshed.bot_id,
@@ -197,9 +234,19 @@ export async function refreshStoredNotionTokenIfNeeded(): Promise<string | null>
     return refreshed.access_token;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    logger.warn("Notion token refresh failed; using current access token", { message });
-    return resolveNotionAccessToken();
+    if (message.includes("invalid_grant") || message.includes("Invalid refresh token")) {
+      refreshTokenInvalid = true;
+      logger.error("Notion refresh token is invalid; re-authorize at /auth/notion", { message });
+      return null;
+    }
+
+    logger.warn("Notion token refresh failed", { message });
+    return null;
   }
+}
+
+export async function refreshStoredNotionTokenIfNeeded(): Promise<string | null> {
+  return resolveNotionAccessToken();
 }
 
 export function applyOAuthTokenToProcessEnv(token: NotionOAuthTokenResponse): void {
@@ -208,4 +255,8 @@ export function applyOAuthTokenToProcessEnv(token: NotionOAuthTokenResponse): vo
     process.env.NOTION_REFRESH_TOKEN = token.refresh_token;
   }
   resetEnvCache();
+}
+
+export function getNotionReauthUrl(): string {
+  return "/auth/notion";
 }

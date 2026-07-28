@@ -1,7 +1,7 @@
 import type { RetellSessionRow } from "../types/supabase.js";
 import { getEnv } from "./env.js";
 import { logger } from "./logger.js";
-import { refreshStoredNotionTokenIfNeeded } from "./notionAuth.js";
+import { refreshStoredNotionTokenIfNeeded, tryRefreshNotionAccessToken, verifyNotionAccessToken } from "./notionAuth.js";
 
 const NOTION_BASE = "https://api.notion.com/v1";
 
@@ -20,6 +20,18 @@ async function getNotionApiKey(): Promise<string> {
   if (!apiKey) {
     throw new Error("Notion is not connected. Open /auth/notion to authorize.");
   }
+
+  const verification = await verifyNotionAccessToken(apiKey);
+  if (!verification.valid) {
+    const refreshed = await tryRefreshNotionAccessToken();
+    if (refreshed) {
+      return refreshed;
+    }
+    throw new Error(
+      "Notion token is invalid. Re-authorize at /auth/notion and update NOTION_API_KEY and NOTION_REFRESH_TOKEN in Render."
+    );
+  }
+
   return apiKey;
 }
 

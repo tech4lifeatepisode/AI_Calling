@@ -1,6 +1,6 @@
 import type { Request, Response } from "express";
 import { getNotionDatabaseInfo } from "../services/notion.js";
-import { getNotionConnectionStatus } from "../services/notionAuth.js";
+import { getNotionConnectionStatus, getNotionReauthUrl } from "../services/notionAuth.js";
 import { getEnv } from "../services/env.js";
 
 export async function notionStatusHandler(_req: Request, res: Response): Promise<void> {
@@ -19,6 +19,7 @@ export async function notionStatusHandler(_req: Request, res: Response): Promise
     apiKeyConfigured: Boolean(env.NOTION_API_KEY),
     refreshTokenConfigured: Boolean(env.NOTION_REFRESH_TOKEN),
     connection,
+    reauthUrl: connection.needsReauth ? getNotionReauthUrl() : undefined,
     database,
     discoveredDatabases: database?.availableDatabases,
     liveSync: {
