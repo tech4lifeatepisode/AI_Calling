@@ -3,14 +3,31 @@ import { z } from "zod";
 export const tourTypeSchema = z.enum(["virtual", "in_person"]);
 
 // Use separate optional fields (not shared Zod instances) so JSON Schema has no $ref/null unions.
+const retellContextFields = {
+  sessionId: z
+    .string()
+    .optional()
+    .describe("Retell call_id for this conversation. Always pass when available."),
+  hubspotContactId: z
+    .string()
+    .optional()
+    .describe("HubSpot contact ID from call metadata or Retell dynamic variables."),
+  hubspotDealId: z
+    .string()
+    .optional()
+    .describe(
+      "HubSpot deal ID from call metadata (e.g. metadata.object.objectId when objectType is DEAL)."
+    ),
+  execution_message: z.string().optional(),
+};
+
 export const getTourAvailabilityInputSchema = z.object({
   tourType: tourTypeSchema,
   timezone: z.string().optional(),
   monthOffset: z.number().int().min(0).optional(),
   preferredDay: z.string().optional(),
   preferredTime: z.string().optional(),
-  sessionId: z.string().optional(),
-  execution_message: z.string().optional(),
+  ...retellContextFields,
 });
 
 export const bookTourInputSchema = z.object({
@@ -18,14 +35,20 @@ export const bookTourInputSchema = z.object({
   startTime: z.string().min(1),
   durationMinutes: z.number().int().positive().optional(),
   timezone: z.string().optional(),
-  email: z.string().email().optional(),
+  email: z
+    .string()
+    .email()
+    .optional()
+    .describe(
+      "Guest email. Omit when hubspotDealId or hubspotContactId is passed — never use placeholder addresses."
+    ),
   firstName: z.string().optional(),
   lastName: z.string().optional(),
   phone: z.string().optional(),
-  hubspotContactId: z.string().optional(),
-  hubspotDealId: z.string().optional(),
-  sessionId: z.string().optional(),
-  execution_message: z.string().optional(),
+  hubspotContactId: retellContextFields.hubspotContactId,
+  hubspotDealId: retellContextFields.hubspotDealId,
+  sessionId: retellContextFields.sessionId,
+  execution_message: retellContextFields.execution_message,
 });
 
 export const logRetellSessionInputSchema = z.object({
@@ -56,23 +79,23 @@ export const logRetellSessionInputSchema = z.object({
 });
 
 export const logTourPreferenceInputSchema = z.object({
-  sessionId: z.string().optional(),
-  hubspotContactId: z.string().optional(),
-  hubspotDealId: z.string().optional(),
+  sessionId: retellContextFields.sessionId,
+  hubspotContactId: retellContextFields.hubspotContactId,
+  hubspotDealId: retellContextFields.hubspotDealId,
   tourType: z.enum(["virtual", "in_person", "unknown"]).optional(),
   requestedDay: z.string().optional(),
   requestedTime: z.string().optional(),
   guestEmail: z.string().email().optional(),
   guestPhone: z.string().optional(),
   status: z.enum(["interested", "not_interested", "asked_to_send_links", "booking_failed"]),
-  execution_message: z.string().optional(),
+  execution_message: retellContextFields.execution_message,
 });
 
 const episodeContextFields = {
-  sessionId: z.string().optional(),
-  hubspotContactId: z.string().optional(),
-  hubspotDealId: z.string().optional(),
-  execution_message: z.string().optional(),
+  sessionId: retellContextFields.sessionId,
+  hubspotContactId: retellContextFields.hubspotContactId,
+  hubspotDealId: retellContextFields.hubspotDealId,
+  execution_message: retellContextFields.execution_message,
 };
 
 export const listSelectableRoomTypesInputSchema = z.object({

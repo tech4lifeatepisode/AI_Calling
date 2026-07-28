@@ -177,6 +177,18 @@ When the guest wants a tour:
 
 **Email for booking:** Cara can pass `hubspotDealId` and/or `hubspotContactId` from Retell dynamic variables instead of asking for email — the middle layer looks up the contact email from HubSpot automatically.
 
+**Required on every MCP tool call during a live call:**
+
+| Parameter | Value |
+|-----------|-------|
+| `sessionId` | Retell `call_id` for the active call |
+| `hubspotDealId` | Deal ID from HubSpot workflow metadata (`metadata.object.objectId` when `objectType` is `DEAL`) or a Retell dynamic variable |
+| `hubspotContactId` | Associated HubSpot contact ID when available |
+
+Never pass placeholder emails such as `need_email@example.com`. If booking fails, use the WhatsApp fallback from the tool response and **do not** tell the guest the tour is booked.
+
+Configure Retell **dynamic variables** in your HubSpot outbound-call workflow so Cara receives at least `hubspotDealId` (and ideally `hubspotContactId`) on every call.
+
 **After a successful booking:** If `TOUR_BOOKING_EMAIL_ENABLED=true`, a React Email notification is sent to `TOUR_BOOKING_NOTIFY_EMAIL` with the tour time plus links to the HubSpot deal and contact records.
 
 ---

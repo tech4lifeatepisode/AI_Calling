@@ -1,5 +1,6 @@
 import type { RetellCallSummary, RetellListCallsResponse } from "../types/retellApi.js";
 import type { RetellSessionRow } from "../types/supabase.js";
+import { extractHubspotDealIdFromMetadata } from "./callContext.js";
 import { getEnv, requireRetellApiKey } from "./env.js";
 import {
   dedupeCallsById,
@@ -235,6 +236,16 @@ export async function getRetellCall(callId: string): Promise<RetellCallSummary |
   return result.data;
 }
 
+export async function getRetellCallIfConfigured(
+  callId: string
+): Promise<RetellCallSummary | null> {
+  const env = getEnv();
+  if (!env.RETELL_API_KEY) {
+    return null;
+  }
+  return getRetellCall(callId);
+}
+
 export function retellCallToSessionRow(
   call: RetellCallSummary,
   hubspotDealId?: string | null
@@ -276,7 +287,10 @@ export function retellCallToSessionRow(
     transcript: call.transcript ?? null,
     transcript_with_tool_calls: call.transcript_with_tool_calls ?? null,
     scrubbed_transcript_with_tool_calls: call.scrubbed_transcript_with_tool_calls ?? null,
-    hubspot_deal_id: hubspotDealId ?? null,
+    hubspot_deal_id:
+      hubspotDealId ??
+      extractHubspotDealIdFromMetadata(call.metadata ?? undefined) ??
+      null,
     raw_payload: call as unknown as Record<string, unknown>,
   };
 }
@@ -295,8 +309,8 @@ export function buildCallIndexes(calls: RetellCallSummary[]): {
 
     byCallId.set(call.call_id, call);
 
-    const metadataDealId = call.metadata?.hubspot_deal_id ?? call.metadata?.hubspotDealId;
-    if (typeof metadataDealId === "string" && metadataDealId.trim()) {
+    const metadataDealId = extractHubspotDealIdFromMetadata(call.metadata ?? undefined);
+    if (metadataDealId) {
       const existing = byDealId.get(metadataDealId);
       if (
         !existing ||

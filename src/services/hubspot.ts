@@ -238,11 +238,58 @@ export async function getBookingInfo(
   return { ok: true, data: result.data ?? undefined };
 }
 
+function asConsentOptionArray(raw: unknown): Array<{ communicationTypeId: string }> {
+  if (!raw) return [];
+
+  if (Array.isArray(raw)) {
+    return raw.flatMap((item) => asConsentOptionArray(item));
+  }
+
+  if (typeof raw === "object") {
+    const record = raw as Record<string, unknown>;
+    if (typeof record.communicationTypeId === "string" && record.communicationTypeId.trim()) {
+      return [{ communicationTypeId: record.communicationTypeId.trim() }];
+    }
+
+    for (const key of [
+      "communicationsCheckboxes",
+      "legalConsentOptions",
+      "options",
+      "consentOptions",
+    ]) {
+      const nested = record[key];
+      if (nested !== undefined) {
+        const parsed = asConsentOptionArray(nested);
+        if (parsed.length > 0) {
+          return parsed;
+        }
+      }
+    }
+  }
+
+  return [];
+}
+
+export function normalizeLegalConsentOptions(
+  bookingInfo: HubSpotBookingInfo | undefined
+): Array<{ communicationTypeId: string }> {
+  const raw = bookingInfo?.customParams?.legalConsentOptions;
+  const options = asConsentOptionArray(raw);
+  const seen = new Set<string>();
+
+  return options.filter((opt) => {
+    if (seen.has(opt.communicationTypeId)) {
+      return false;
+    }
+    seen.add(opt.communicationTypeId);
+    return true;
+  });
+}
+
 function buildLegalConsentResponses(
   bookingInfo: HubSpotBookingInfo | undefined
 ): Array<{ communicationTypeId: string; consented: boolean }> {
-  const options = bookingInfo?.customParams?.legalConsentOptions ?? [];
-  return options.map((opt) => ({
+  return normalizeLegalConsentOptions(bookingInfo).map((opt) => ({
     communicationTypeId: opt.communicationTypeId,
     consented: true,
   }));
@@ -265,7 +312,8 @@ function buildFormFields(
     }
   }
 
-  const requiredFields = bookingInfo?.customParams?.formFields ?? [];
+  const rawFormFields = bookingInfo?.customParams?.formFields;
+  const requiredFields = Array.isArray(rawFormFields) ? rawFormFields : [];
   for (const field of requiredFields) {
     if (!field.required) continue;
     const exists = fields.some((f) => f.name === field.name);

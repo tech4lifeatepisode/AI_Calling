@@ -29,6 +29,7 @@ import {
   listSelectableRooms,
 } from "../services/episodeRoomBooking.js";
 import { resolveGuestContactForBooking } from "../services/guestContactResolver.js";
+import { resolveCallContext, sanitizeGuestEmail } from "../services/callContext.js";
 import { sendTourBookingNotification } from "../services/tourBookingEmail.js";
 
 function opt(value: string | null | undefined): string | undefined {
@@ -174,20 +175,26 @@ export function createMcpServer(): McpServer {
     "book_tour",
     {
       description:
-        "Books a HubSpot tour after the guest explicitly confirms the selected slot.",
+        "Books a HubSpot tour after the guest explicitly confirms the selected slot. Always pass sessionId (Retell call_id). Prefer hubspotDealId and hubspotContactId from call metadata — never use placeholder emails. Only tell the guest the tour is booked when this tool returns success: true.",
       inputSchema: bookTourInputSchema.shape,
     },
     async (input) => {
       const startedAt = Date.now();
       const parsed = bookTourInputSchema.parse(input);
 
+      const callContext = await resolveCallContext({
+        sessionId: opt(parsed.sessionId),
+        hubspotDealId: opt(parsed.hubspotDealId),
+        hubspotContactId: opt(parsed.hubspotContactId),
+      });
+
       const resolvedGuest = await resolveGuestContactForBooking({
-        email: opt(parsed.email),
+        email: sanitizeGuestEmail(parsed.email) ?? callContext.hubspotContactEmail,
         firstName: opt(parsed.firstName),
         lastName: opt(parsed.lastName),
         phone: opt(parsed.phone),
-        hubspotContactId: opt(parsed.hubspotContactId),
-        hubspotDealId: opt(parsed.hubspotDealId),
+        hubspotContactId: callContext.hubspotContactId,
+        hubspotDealId: callContext.hubspotDealId,
       });
 
       if (!resolvedGuest.ok) {
@@ -199,7 +206,7 @@ export function createMcpServer(): McpServer {
         };
         await logToolCall({
           toolName: "book_tour",
-          sessionId: opt(parsed.sessionId),
+          sessionId: callContext.sessionId,
           status: "error",
           request: parsed,
           response,
@@ -220,7 +227,7 @@ export function createMcpServer(): McpServer {
         };
         await logToolCall({
           toolName: "book_tour",
-          sessionId: opt(parsed.sessionId),
+          sessionId: callContext.sessionId,
           status: "error",
           request: parsed,
           response,
@@ -247,19 +254,19 @@ export function createMcpServer(): McpServer {
           firstName: guest.firstName,
           lastName: guest.lastName,
           phone: guest.phone,
-          hubspotContactId: guest.hubspotContactId ?? opt(parsed.hubspotContactId),
-          hubspotDealId: opt(parsed.hubspotDealId),
-          sessionId: opt(parsed.sessionId),
+          hubspotContactId: guest.hubspotContactId ?? callContext.hubspotContactId,
+          hubspotDealId: callContext.hubspotDealId,
+          sessionId: callContext.sessionId,
         });
 
         const bookingStatus = bookingResult.success ? "booked" : "failed";
 
         await insertTourBooking({
-          session_id: opt(parsed.sessionId) ?? null,
+          session_id: callContext.sessionId ?? null,
           hubspot_contact_id: bookingResult.success
-            ? bookingResult.contactId ?? guest.hubspotContactId ?? opt(parsed.hubspotContactId) ?? null
-            : guest.hubspotContactId ?? opt(parsed.hubspotContactId) ?? null,
-          hubspot_deal_id: opt(parsed.hubspotDealId) ?? null,
+            ? bookingResult.contactId ?? guest.hubspotContactId ?? callContext.hubspotContactId ?? null
+            : guest.hubspotContactId ?? callContext.hubspotContactId ?? null,
+          hubspot_deal_id: callContext.hubspotDealId ?? null,
           guest_first_name: guest.firstName ?? null,
           guest_last_name: guest.lastName ?? null,
           guest_email: guest.email,
@@ -285,9 +292,9 @@ export function createMcpServer(): McpServer {
           error_message: bookingResult.success ? null : bookingResult.error,
         });
 
-        if (bookingResult.success && parsed.hubspotDealId) {
+        if (bookingResult.success && callContext.hubspotDealId) {
           await updateHubspotDeal({
-            hubspotDealId: parsed.hubspotDealId,
+            hubspotDealId: callContext.hubspotDealId,
             properties: buildDealUpdateProperties({
               tourType: parsed.tourType,
               startTime: bookingResult.startTime,
@@ -303,13 +310,16 @@ export function createMcpServer(): McpServer {
             guestEmail: guest.email,
             guestFirstName: guest.firstName,
             guestLastName: guest.lastName,
-            hubspotDealId: opt(parsed.hubspotDealId),
+            hubspotDealId: callContext.hubspotDealId,
             hubspotContactId:
               bookingResult.contactId ??
               guest.hubspotContactId ??
-              opt(parsed.hubspotContactId),
+              callContext.hubspotContactId,
           });
         }
+
+        const bookingFailedMessage =
+          "I'm sorry, I couldn't complete the booking right now. I'll send you the tour links by WhatsApp so you can choose the time that works best for you. Do not tell the guest the tour is booked.";
 
         const response = bookingResult.success
           ? {
@@ -324,14 +334,14 @@ export function createMcpServer(): McpServer {
           : {
               success: false,
               tourType: parsed.tourType,
-              messageForAgent: bookingResult.fallbackMessageForAgent,
-              fallbackMessageForAgent: bookingResult.fallbackMessageForAgent,
+              messageForAgent: bookingFailedMessage,
+              fallbackMessageForAgent: bookingFailedMessage,
               error: bookingResult.error,
             };
 
         await logToolCall({
           toolName: "book_tour",
-          sessionId: opt(parsed.sessionId),
+          sessionId: callContext.sessionId,
           status: bookingResult.success ? "success" : "error",
           request: parsed,
           response,
@@ -342,19 +352,19 @@ export function createMcpServer(): McpServer {
         return jsonResult(response);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
+        const bookingFailedMessage =
+          "I'm sorry, I couldn't complete the booking right now. I'll send you the tour links by WhatsApp so you can choose the time that works best for you. Do not tell the guest the tour is booked.";
         const response = {
           success: false,
           tourType: parsed.tourType,
-          messageForAgent:
-            "I'm sorry, I couldn't complete the booking right now. I'll send you the tour links by WhatsApp so you can choose the time that works best for you.",
-          fallbackMessageForAgent:
-            "I'm sorry, I couldn't complete the booking right now. I'll send you the tour links by WhatsApp so you can choose the time that works best for you.",
+          messageForAgent: bookingFailedMessage,
+          fallbackMessageForAgent: bookingFailedMessage,
           error: message,
         };
 
         await logToolCall({
           toolName: "book_tour",
-          sessionId: opt(parsed.sessionId),
+          sessionId: callContext.sessionId,
           status: "error",
           request: parsed,
           response,
@@ -431,12 +441,17 @@ export function createMcpServer(): McpServer {
       const parsed = logTourPreferenceInputSchema.parse(input);
 
       try {
+        const callContext = await resolveCallContext({
+          sessionId: opt(parsed.sessionId),
+          hubspotDealId: opt(parsed.hubspotDealId),
+          hubspotContactId: opt(parsed.hubspotContactId),
+        });
         const env = getEnv();
         const result = await insertTourBooking({
-          session_id: opt(parsed.sessionId) ?? null,
-          hubspot_contact_id: opt(parsed.hubspotContactId) ?? null,
-          hubspot_deal_id: opt(parsed.hubspotDealId) ?? null,
-          guest_email: opt(parsed.guestEmail) ?? null,
+          session_id: callContext.sessionId ?? null,
+          hubspot_contact_id: callContext.hubspotContactId ?? null,
+          hubspot_deal_id: callContext.hubspotDealId ?? null,
+          guest_email: sanitizeGuestEmail(parsed.guestEmail) ?? callContext.hubspotContactEmail ?? null,
           guest_phone: opt(parsed.guestPhone) ?? null,
           tour_type: parsed.tourType ?? "unknown",
           timezone: env.DEFAULT_TIMEZONE,
@@ -451,7 +466,7 @@ export function createMcpServer(): McpServer {
 
         await logToolCall({
           toolName: "log_tour_preference",
-          sessionId: opt(parsed.sessionId),
+          sessionId: callContext.sessionId,
           status: result.success ? "success" : "error",
           request: parsed,
           response,

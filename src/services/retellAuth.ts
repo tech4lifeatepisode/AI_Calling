@@ -1,4 +1,5 @@
 import type { Request, Response, NextFunction } from "express";
+import { extractHubspotDealIdFromMetadata } from "./callContext.js";
 import { getEnv } from "./env.js";
 import { verifyRetellSignature } from "./retellSignature.js";
 
@@ -71,7 +72,8 @@ export function parseRetellPayload(body: unknown): {
   const hubspotDealId =
     (args.hubspotDealId as string | undefined) ??
     (metadata.hubspot_deal_id as string | undefined) ??
-    (metadata.hubspotDealId as string | undefined);
+    (metadata.hubspotDealId as string | undefined) ??
+    extractHubspotDealIdFromMetadata(metadata);
 
   const hubspotContactId =
     (args.hubspotContactId as string | undefined) ??

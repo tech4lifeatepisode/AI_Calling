@@ -16,28 +16,25 @@ import {
   buildListSelectableRoomsSummary,
   buildPricingSummary,
 } from "./spokenSummary.js";
+import { resolveCallContext, type CallContext } from "./callContext.js";
 import {
-  getRetellSessionBySessionId,
   insertRoomPricingRequest,
   updateRetellSessionPricing,
 } from "./supabase.js";
 
-export interface CallContext {
-  sessionId?: string | null;
-  hubspotDealId?: string | null;
-  hubspotContactId?: string | null;
-  requestSource?: "mcp" | "retell";
-}
+export type { CallContext };
 
 export interface ListSelectableRoomsInput extends CallContext {
   checkIn: string;
   checkOut: string;
+  requestSource?: "mcp" | "retell";
 }
 
 export interface CheckAvailabilityInput extends CallContext {
   unitTypeSlug: string;
   checkIn: string;
   checkOut: string;
+  requestSource?: "mcp" | "retell";
 }
 
 export interface GetPricingInput extends CallContext {
@@ -47,41 +44,7 @@ export interface GetPricingInput extends CallContext {
   people: number;
   promoCode?: string;
   paymentOption?: string;
-}
-
-interface ResolvedHubspotContext {
-  hubspotDealId?: string | null;
-  hubspotContactId?: string | null;
-  hubspotDealName?: string | null;
-  hubspotContactName?: string | null;
-  hubspotContactEmail?: string | null;
-}
-
-async function resolveHubspotContext(
-  ctx: CallContext
-): Promise<ResolvedHubspotContext> {
-  if (!ctx.sessionId) {
-    return {
-      hubspotDealId: ctx.hubspotDealId,
-      hubspotContactId: ctx.hubspotContactId,
-    };
-  }
-
-  const session = await getRetellSessionBySessionId(ctx.sessionId);
-  if (!session) {
-    return {
-      hubspotDealId: ctx.hubspotDealId,
-      hubspotContactId: ctx.hubspotContactId,
-    };
-  }
-
-  return {
-    hubspotDealId: ctx.hubspotDealId ?? session.hubspot_deal_id,
-    hubspotContactId: ctx.hubspotContactId ?? session.hubspot_contact_id,
-    hubspotDealName: session.hubspot_deal_name,
-    hubspotContactName: session.hubspot_contact_name,
-    hubspotContactEmail: session.hubspot_contact_email,
-  };
+  requestSource?: "mcp" | "retell";
 }
 
 export async function listSelectableRooms(input: ListSelectableRoomsInput) {
@@ -188,7 +151,7 @@ export async function checkRoomAvailability(input: CheckAvailabilityInput) {
 export async function getRoomPricing(input: GetPricingInput) {
   const startedAt = Date.now();
   const displayName = getRoomDisplayName(input.unitTypeSlug);
-  const hubspot = await resolveHubspotContext(input);
+  const hubspot = await resolveCallContext(input);
   const requestSource = input.requestSource ?? "mcp";
 
   const selectability = checkRoomSelectability(

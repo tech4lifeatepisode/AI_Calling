@@ -1,5 +1,6 @@
 import { hubspotFetch } from "./hubspot.js";
 import { getDealContactDetails } from "./hubspotEnrichment.js";
+import { sanitizeGuestEmail } from "./callContext.js";
 import type { HubSpotContactDetails } from "../types/hubspotCrm.js";
 
 interface HubSpotContactResponse {
@@ -70,12 +71,12 @@ export async function resolveGuestContactForBooking(input: {
     contact = await getDealContactDetails(input.hubspotDealId);
   }
 
-  const email = input.email?.trim() || contact?.email || null;
+  const email = sanitizeGuestEmail(input.email) || contact?.email || null;
   if (!email) {
     return {
       ok: false,
       error:
-        "Email is required to book a tour. Pass email directly or provide hubspotContactId / hubspotDealId so it can be looked up from HubSpot.",
+        "Email is required to book a tour. Pass hubspotDealId and/or hubspotContactId (preferred), or pass the guest's real email — never use placeholder addresses like need_email@example.com.",
     };
   }
 
