@@ -9,6 +9,7 @@ import type {
 } from "../types/supabase.js";
 import { getEnv } from "./env.js";
 import { logger } from "./logger.js";
+import { syncRetellSessionToNotion } from "./notion.js";
 
 let client: SupabaseClient | null = null;
 
@@ -39,6 +40,15 @@ export async function upsertRetellSession(
       logger.error("Supabase upsertRetellSession failed", { message: error.message });
       return { success: false, error: error.message };
     }
+
+    void syncRetellSessionToNotion(row).then((notionResult) => {
+      if (!notionResult.success) {
+        logger.warn("Notion sync after upsert failed", {
+          sessionId: row.session_id,
+          error: notionResult.error,
+        });
+      }
+    });
 
     return { success: true };
   } catch (err) {
@@ -218,11 +228,96 @@ export async function updateRetellSessionPricing(
       return { success: false, error: error.message };
     }
 
+    const updated = await getRetellSessionBySessionId(session_id);
+    if (updated) {
+      void syncRetellSessionToNotion(updated).then((notionResult) => {
+        if (!notionResult.success) {
+          logger.warn("Notion sync after pricing update failed", {
+            sessionId: session_id,
+            error: notionResult.error,
+          });
+        }
+      });
+    }
+
     return { success: true };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logger.warn("Supabase updateRetellSessionPricing exception", { message });
     return { success: false, error: message };
+  }
+}
+
+export async function getLastSuccessfulSyncTimeByType(
+  prefix: string
+): Promise<Date | null> {
+  try {
+    const { data, error } = await getClient()
+      .from("sync_runs")
+      .select("completed_at")
+      .eq("status", "success")
+      .like("sync_type", `${prefix}%`)
+      .order("completed_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      logger.warn("Supabase getLastSuccessfulSyncTimeByType failed", { message: error.message });
+      return null;
+    }
+
+    if (!data?.completed_at) return null;
+    return new Date(data.completed_at);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.warn("Supabase getLastSuccessfulSyncTimeByType exception", { message });
+    return null;
+  }
+}
+
+export async function listRetellSessionsUpdatedSince(
+  since: Date,
+  limit = 500
+): Promise<RetellSessionRow[]> {
+  try {
+    const { data, error } = await getClient()
+      .from("retell_sessions")
+      .select("*")
+      .gte("updated_at", since.toISOString())
+      .order("updated_at", { ascending: true })
+      .limit(limit);
+
+    if (error) {
+      logger.warn("Supabase listRetellSessionsUpdatedSince failed", { message: error.message });
+      return [];
+    }
+
+    return (data as RetellSessionRow[]) ?? [];
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.warn("Supabase listRetellSessionsUpdatedSince exception", { message });
+    return [];
+  }
+}
+
+export async function listRetellSessions(limit = 200): Promise<RetellSessionRow[]> {
+  try {
+    const { data, error } = await getClient()
+      .from("retell_sessions")
+      .select("*")
+      .order("session_time", { ascending: false })
+      .limit(limit);
+
+    if (error) {
+      logger.warn("Supabase listRetellSessions failed", { message: error.message });
+      return [];
+    }
+
+    return (data as RetellSessionRow[]) ?? [];
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.warn("Supabase listRetellSessions exception", { message });
+    return [];
   }
 }
 

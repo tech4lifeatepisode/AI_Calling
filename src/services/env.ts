@@ -61,6 +61,20 @@ const envSchema = z.object({
   SMTP_USER: z.string().optional(),
   SMTP_PASSWORD: z.string().optional(),
   SMTP_FROM: z.string().optional(),
+  NOTION_API_KEY: z.string().min(1).optional(),
+  NOTION_SPRINTS_PAGE_ID: z
+    .string()
+    .min(1)
+    .default("3ab762e2-8bfc-802b-82db-cd3dfc1c05e3"),
+  NOTION_DATABASE_TITLE: z.string().default("Supabase retell_sessions"),
+  NOTION_RETELL_DATABASE_ID: z.string().min(1).optional(),
+  NOTION_API_VERSION: z.string().default("2022-06-28"),
+  NOTION_SYNC_ENABLED: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((v) => v === "true"),
+  NOTION_SYNC_INTERVAL_MS: z.coerce.number().default(300_000),
+  NOTION_SYNC_INITIAL_DELAY_MS: z.coerce.number().default(30_000),
 });
 
 export type Env = z.infer<typeof envSchema>;

@@ -11,7 +11,8 @@
     "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test src/**/*.test.ts",
-    "backfill:calls": "tsx scripts/backfillCallSync.ts"
+    "backfill:calls": "tsx scripts/backfillCallSync.ts",
+    "backfill:notion": "tsx scripts/backfillNotionSync.ts"
   },
   "engines": {
     "node": ">=20 <=22"

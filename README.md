@@ -20,6 +20,8 @@ Retell call → Render MCP server → HubSpot Scheduler API + CRM → Supabase l
 | Route | Auth | Purpose |
 |-------|------|---------|
 | `GET /health` | No | Render health check |
+| `GET /notion/status` | No | Notion sync status + target database info |
+| `POST /cron/sync-notion` | Bearer | Backfill/sync `retell_sessions` → Notion |
 | `POST /mcp` | Bearer | MCP Streamable HTTP endpoint for Retell |
 | `POST /webhooks/retell` | Bearer | Retell post-call webhook → Supabase |
 | `POST /cron/sync-call-data` | Bearer | HubSpot deals (`ai_call_attempted=true`) → Retell calls → Supabase |
@@ -235,6 +237,65 @@ See [`supabase/schema.sql`](supabase/schema.sql) for full schema. Existing proje
 
 - [`supabase/migrations/20260701_call_sync.sql`](supabase/migrations/20260701_call_sync.sql)
 - [`supabase/migrations/20260701_hubspot_enrichment.sql`](supabase/migrations/20260701_hubspot_enrichment.sql)
+
+---
+
+## Notion live sync (`retell_sessions` → Sprints page)
+
+Syncs your existing Supabase `retell_sessions` table into the **Supabase retell_sessions** database on your [Sprints page](https://app.notion.com/p/Sprints-28b762e28bfc8039a24bcee7a5cdb094?p=3ab762e28bfc802b82dbcd3dfc1c05e3&pm=s&t=3ab762e28bfc80bf819b00a91ff27ad9).
+
+No new Supabase tables are required.
+
+### How live sync works
+
+1. **Instant** — every time this app upserts `retell_sessions` (Retell webhook, call sync, MCP tool)
+2. **Every 5 minutes** — polls Supabase for rows with a newer `updated_at` and pushes changes to Notion
+
+### Setup (5 steps)
+
+**1. Create a Notion internal integration**
+
+- Go to [notion.so/my-integrations](https://www.notion.so/my-integrations) → **New integration**
+- Name: `AI Calling Sync`
+- Copy the **Internal Integration Secret** → `NOTION_API_KEY`
+
+**2. Share your Sprints page with the integration**
+
+- Open your Sprints page
+- **⋯ → Connections → AI Calling Sync**
+- Make sure the **Supabase retell_sessions** database/section is included
+
+**3. Ensure the Notion database exists**
+
+On the Sprints page, under **Supabase retell_sessions**, create (or keep) a **table database** with these columns:
+
+Session ID (title), Call time, Duration (s), Status, Sentiment, Outcome, Contact, Email, Phone, Deal, Deal stage, Agent, Direction, Cost, Total price, Recording, Retell log, Supabase updated
+
+**4. Set Render env vars**
+
+| Variable | Value |
+|----------|-------|
+| `NOTION_API_KEY` | Internal integration secret |
+| `NOTION_SPRINTS_PAGE_ID` | `3ab762e2-8bfc-802b-82db-cd3dfc1c05e3` |
+| `NOTION_DATABASE_TITLE` | `Supabase retell_sessions` |
+| `NOTION_SYNC_ENABLED` | `true` |
+
+Optional: set `NOTION_RETELL_DATABASE_ID` if auto-discovery fails.
+
+**5. Backfill existing rows**
+
+```bash
+curl -X POST "https://ai-calling-j1hu.onrender.com/cron/sync-notion?full=true" \
+  -H "Authorization: Bearer YOUR_MCP_SERVER_SECRET"
+```
+
+Check status:
+
+```bash
+curl https://ai-calling-j1hu.onrender.com/notion/status
+```
+
+---
 
 **HubSpot fields stored on `retell_sessions` after sync:**
 

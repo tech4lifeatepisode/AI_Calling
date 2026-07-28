@@ -81,3 +81,19 @@ services:
         sync: false
       - key: SMTP_FROM
         sync: false
+      - key: NOTION_SPRINTS_PAGE_ID
+        value: 3ab762e2-8bfc-802b-82db-cd3dfc1c05e3
+      - key: NOTION_DATABASE_TITLE
+        value: Supabase retell_sessions
+      - key: NOTION_SYNC_ENABLED
+        value: "true"
+      - key: NOTION_SYNC_INTERVAL_MS
+        value: "300000"
+      - key: NOTION_SYNC_INITIAL_DELAY_MS
+        value: "30000"
+      - key: NOTION_API_VERSION
+        value: "2022-06-28"
+      - key: NOTION_API_KEY
+        sync: false
+      - key: NOTION_RETELL_DATABASE_ID
+        sync: false

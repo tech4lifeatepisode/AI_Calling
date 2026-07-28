@@ -5,6 +5,8 @@ import { captureRawBody, requireRetellOrBearerAuth } from "./services/retellAuth
 import { healthHandler } from "./routes/health.js";
 import { retellWebhookHandler } from "./routes/retellWebhook.js";
 import { syncCallDataHandler } from "./routes/syncCallData.js";
+import { syncNotionHandler } from "./routes/syncNotion.js";
+import { notionStatusHandler } from "./routes/notionStatus.js";
 import {
   checkAvailabilityHandler,
   getPricingHandler,
@@ -67,6 +69,14 @@ export function createApp(): Express {
   });
 
   app.get("/health", healthHandler);
+
+  app.get("/notion/status", (req, res) => {
+    void notionStatusHandler(req, res);
+  });
+
+  app.post("/cron/sync-notion", requireBearerAuth, (req, res) => {
+    void syncNotionHandler(req, res);
+  });
 
   app.post("/webhooks/retell", requireBearerAuth, (req, res) => {
     void retellWebhookHandler(req, res);
