@@ -79,7 +79,7 @@ const envSchema = z.object({
   NOTION_DATABASE_TITLE: z.string().default("Supabase retell_sessions"),
   NOTION_AUTO_CREATE_DATABASE: z
     .enum(["true", "false"])
-    .default("false")
+    .default("true")
     .transform((v) => v === "true"),
   NOTION_RETELL_DATABASE_ID: z.string().min(1).optional(),
   NOTION_API_VERSION: z.string().default("2022-06-28"),

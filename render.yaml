@@ -88,7 +88,7 @@ services:
       - key: NOTION_DATABASE_TITLE
         value: Supabase retell_sessions
       - key: NOTION_AUTO_CREATE_DATABASE
-        value: "false"
+        value: "true"
       - key: NOTION_SYNC_ENABLED
         value: "true"
       - key: NOTION_SYNC_INTERVAL_MS

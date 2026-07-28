@@ -94,12 +94,22 @@ async function getDatabaseTitle(
   return data.title?.map((part) => part.plain_text ?? "").join("") || null;
 }
 
+interface NotionBlock {
+  id: string;
+  type: string;
+  has_children?: boolean;
+  child_page?: { title?: string };
+  heading_1?: { rich_text?: Array<{ plain_text?: string }> };
+  heading_2?: { rich_text?: Array<{ plain_text?: string }> };
+  heading_3?: { rich_text?: Array<{ plain_text?: string }> };
+}
+
 async function listBlockChildren(
   apiKey: string,
   blockId: string,
   apiVersion: string
-): Promise<Array<{ id: string; type: string; has_children?: boolean }>> {
-  const results: Array<{ id: string; type: string; has_children?: boolean }> = [];
+): Promise<NotionBlock[]> {
+  const results: NotionBlock[] = [];
   let cursor: string | undefined;
 
   do {
@@ -118,7 +128,7 @@ async function listBlockChildren(
     }
 
     const data = (await res.json()) as {
-      results: Array<{ id: string; type: string; has_children?: boolean }>;
+      results: NotionBlock[];
       has_more?: boolean;
       next_cursor?: string | null;
     };
@@ -128,6 +138,76 @@ async function listBlockChildren(
   } while (cursor);
 
   return results;
+}
+
+function getBlockPlainText(block: NotionBlock): string | null {
+  for (const key of ["heading_1", "heading_2", "heading_3"] as const) {
+    const part = block[key];
+    if (part?.rich_text?.length) {
+      return part.rich_text.map((item) => item.plain_text ?? "").join("");
+    }
+  }
+
+  if (block.type === "child_page" && block.child_page?.title) {
+    return block.child_page.title;
+  }
+
+  return null;
+}
+
+async function getPageTitle(
+  apiKey: string,
+  pageId: string,
+  apiVersion: string
+): Promise<string | null> {
+  const res = await fetch(`${NOTION_BASE}/pages/${pageId}`, {
+    headers: notionHeaders(apiKey, apiVersion),
+  });
+
+  if (!res.ok) {
+    return null;
+  }
+
+  const data = (await res.json()) as {
+    properties?: {
+      title?: {
+        title?: Array<{ plain_text?: string }>;
+      };
+    };
+  };
+
+  return data.properties?.title?.title?.map((part) => part.plain_text ?? "").join("") || null;
+}
+
+async function findTargetPageForSection(
+  apiKey: string,
+  pageIds: string[],
+  sectionTitle: string,
+  apiVersion: string
+): Promise<{ pageId: string; matchedBy: string }> {
+  for (const pageId of pageIds) {
+    const pageTitle = await getPageTitle(apiKey, pageId, apiVersion);
+    if (pageTitle && titleMatches(sectionTitle, pageTitle)) {
+      return { pageId, matchedBy: "page_title" };
+    }
+
+    const blocks = await listBlockChildren(apiKey, pageId, apiVersion);
+    for (const block of blocks) {
+      const text = getBlockPlainText(block);
+      if (!text || !titleMatches(sectionTitle, text)) {
+        continue;
+      }
+
+      if (block.type === "child_page") {
+        return { pageId: block.id, matchedBy: "child_page" };
+      }
+
+      return { pageId, matchedBy: "heading" };
+    }
+  }
+
+  const env = getEnv();
+  return { pageId: env.NOTION_SPRINTS_PAGE_ID, matchedBy: "default" };
 }
 
 function normalizeTitle(value: string): string {
@@ -344,13 +424,26 @@ export async function resolveNotionDatabaseId(): Promise<string> {
   );
 
   if (!databaseId && env.NOTION_AUTO_CREATE_DATABASE) {
-    databaseId = await createRetellSessionsDatabase(
+    const target = await findTargetPageForSection(
       apiKey,
-      env.NOTION_SPRINTS_PAGE_ID,
+      pageIds,
       env.NOTION_DATABASE_TITLE,
       env.NOTION_API_VERSION
     );
-    logger.info("Created Notion database for retell_sessions sync", { databaseId });
+
+    databaseId = await createRetellSessionsDatabase(
+      apiKey,
+      target.pageId,
+      env.NOTION_DATABASE_TITLE,
+      env.NOTION_API_VERSION
+    );
+
+    logger.info("Created Notion database for retell_sessions sync", {
+      databaseId,
+      pageId: target.pageId,
+      matchedBy: target.matchedBy,
+      title: env.NOTION_DATABASE_TITLE,
+    });
   }
 
   if (!databaseId) {
@@ -374,6 +467,76 @@ export async function resolveNotionDatabaseId(): Promise<string> {
   });
 
   return databaseId;
+}
+
+export async function setupNotionDatabase(): Promise<{
+  databaseId: string;
+  created: boolean;
+  pageId: string;
+  matchedBy?: string;
+}> {
+  resetNotionDatabaseCache();
+
+  const env = getEnv();
+  const apiKey = await getNotionApiKey();
+  const pageIds = env.NOTION_SEARCH_PAGE_IDS.split(",")
+    .map((id) => id.trim())
+    .filter(Boolean);
+
+  if (env.NOTION_RETELL_DATABASE_ID) {
+    cachedDatabaseId = env.NOTION_RETELL_DATABASE_ID;
+    return {
+      databaseId: env.NOTION_RETELL_DATABASE_ID,
+      created: false,
+      pageId: env.NOTION_SPRINTS_PAGE_ID,
+      matchedBy: "env",
+    };
+  }
+
+  const existingId = await findDatabaseOnPages(
+    apiKey,
+    pageIds,
+    env.NOTION_DATABASE_TITLE,
+    env.NOTION_API_VERSION
+  );
+
+  if (existingId) {
+    cachedDatabaseId = existingId;
+    return {
+      databaseId: existingId,
+      created: false,
+      pageId: env.NOTION_SPRINTS_PAGE_ID,
+      matchedBy: "existing",
+    };
+  }
+
+  const target = await findTargetPageForSection(
+    apiKey,
+    pageIds,
+    env.NOTION_DATABASE_TITLE,
+    env.NOTION_API_VERSION
+  );
+
+  const databaseId = await createRetellSessionsDatabase(
+    apiKey,
+    target.pageId,
+    env.NOTION_DATABASE_TITLE,
+    env.NOTION_API_VERSION
+  );
+
+  cachedDatabaseId = databaseId;
+  logger.info("Setup created Notion retell_sessions database", {
+    databaseId,
+    pageId: target.pageId,
+    matchedBy: target.matchedBy,
+  });
+
+  return {
+    databaseId,
+    created: true,
+    pageId: target.pageId,
+    matchedBy: target.matchedBy,
+  };
 }
 
 async function findNotionPageBySessionId(
