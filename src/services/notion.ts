@@ -114,8 +114,7 @@ async function listBlockChildren(
     });
 
     if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`Notion block lookup failed (${res.status}): ${body}`);
+      return results;
     }
 
     const data = (await res.json()) as {
@@ -131,31 +130,194 @@ async function listBlockChildren(
   return results;
 }
 
+function normalizeTitle(value: string): string {
+  return value.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function titleMatches(expectedTitle: string, actualTitle: string | null): boolean {
+  if (!actualTitle) return false;
+
+  const expected = normalizeTitle(expectedTitle);
+  const actual = normalizeTitle(actualTitle);
+
+  if (actual === expected) return true;
+  if (actual.includes(expected) || expected.includes(actual)) return true;
+
+  return (
+    actual.includes("retell") &&
+    actual.includes("session") &&
+    (expected.includes("retell") || expected.includes("supabase"))
+  );
+}
+
+export interface DiscoveredNotionDatabase {
+  id: string;
+  title: string;
+  pageId: string;
+}
+
+async function collectDatabasesOnPage(
+  apiKey: string,
+  pageId: string,
+  apiVersion: string,
+  discovered: DiscoveredNotionDatabase[],
+  visited: Set<string>,
+  depth = 0,
+  maxDepth = 4
+): Promise<void> {
+  if (visited.has(pageId) || depth > maxDepth) {
+    return;
+  }
+
+  visited.add(pageId);
+
+  const directTitle = await getDatabaseTitle(apiKey, pageId, apiVersion);
+  if (directTitle) {
+    discovered.push({ id: pageId, title: directTitle, pageId });
+  }
+
+  const blocks = await listBlockChildren(apiKey, pageId, apiVersion);
+
+  for (const block of blocks) {
+    if (block.type === "child_database") {
+      const title = await getDatabaseTitle(apiKey, block.id, apiVersion);
+      if (title) {
+        discovered.push({ id: block.id, title, pageId });
+      }
+      continue;
+    }
+
+    if (block.type === "child_page") {
+      await collectDatabasesOnPage(
+        apiKey,
+        block.id,
+        apiVersion,
+        discovered,
+        visited,
+        depth + 1,
+        maxDepth
+      );
+      continue;
+    }
+
+    if (block.has_children) {
+      const nestedBlocks = await listBlockChildren(apiKey, block.id, apiVersion);
+      for (const nested of nestedBlocks) {
+        if (nested.type === "child_database") {
+          const title = await getDatabaseTitle(apiKey, nested.id, apiVersion);
+          if (title) {
+            discovered.push({ id: nested.id, title, pageId });
+          }
+        }
+      }
+    }
+  }
+}
+
+export async function discoverNotionDatabases(): Promise<DiscoveredNotionDatabase[]> {
+  const env = getEnv();
+  const apiKey = await getNotionApiKey();
+  const pageIds = env.NOTION_SEARCH_PAGE_IDS.split(",")
+    .map((id) => id.trim())
+    .filter(Boolean);
+
+  const discovered: DiscoveredNotionDatabase[] = [];
+  const visited = new Set<string>();
+
+  for (const pageId of pageIds) {
+    await collectDatabasesOnPage(
+      apiKey,
+      pageId,
+      env.NOTION_API_VERSION,
+      discovered,
+      visited
+    );
+  }
+
+  const unique = new Map<string, DiscoveredNotionDatabase>();
+  for (const item of discovered) {
+    unique.set(item.id, item);
+  }
+
+  return [...unique.values()];
+}
+
+async function findDatabaseOnPages(
+  apiKey: string,
+  pageIds: string[],
+  expectedTitle: string,
+  apiVersion: string
+): Promise<string | null> {
+  const discovered: DiscoveredNotionDatabase[] = [];
+  const visited = new Set<string>();
+
+  for (const pageId of pageIds) {
+    await collectDatabasesOnPage(apiKey, pageId, apiVersion, discovered, visited);
+  }
+
+  const exact = discovered.find((db) => titleMatches(expectedTitle, db.title));
+  if (exact) {
+    return exact.id;
+  }
+
+  const fuzzy = discovered.find((db) =>
+    normalizeTitle(db.title).includes("retell") &&
+    normalizeTitle(db.title).includes("session")
+  );
+  return fuzzy?.id ?? null;
+}
+
+async function createRetellSessionsDatabase(
+  apiKey: string,
+  parentPageId: string,
+  title: string,
+  apiVersion: string
+): Promise<string> {
+  const res = await fetch(`${NOTION_BASE}/databases`, {
+    method: "POST",
+    headers: notionHeaders(apiKey, apiVersion),
+    body: JSON.stringify({
+      parent: { page_id: parentPageId },
+      title: [{ type: "text", text: { content: title } }],
+      properties: {
+        "Session ID": { title: {} },
+        "Call time": { date: {} },
+        "Duration (s)": { number: {} },
+        Status: { select: {} },
+        Sentiment: { select: {} },
+        Outcome: { select: {} },
+        Contact: { rich_text: {} },
+        Email: { email: {} },
+        Phone: { phone_number: {} },
+        Deal: { rich_text: {} },
+        "Deal stage": { select: {} },
+        Agent: { rich_text: {} },
+        Direction: { select: {} },
+        Cost: { number: {} },
+        "Total price": { number: {} },
+        Recording: { url: {} },
+        "Retell log": { url: {} },
+        "Supabase updated": { date: {} },
+      },
+    }),
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Notion database create failed (${res.status}): ${body}`);
+  }
+
+  const data = (await res.json()) as { id: string };
+  return data.id;
+}
+
 async function findDatabaseOnPage(
   apiKey: string,
   pageId: string,
   expectedTitle: string,
   apiVersion: string
 ): Promise<string | null> {
-  const directTitle = await getDatabaseTitle(apiKey, pageId, apiVersion);
-  if (directTitle?.toLowerCase() === expectedTitle.toLowerCase()) {
-    return pageId;
-  }
-
-  const blocks = await listBlockChildren(apiKey, pageId, apiVersion);
-
-  for (const block of blocks) {
-    if (block.type !== "child_database") {
-      continue;
-    }
-
-    const title = await getDatabaseTitle(apiKey, block.id, apiVersion);
-    if (title?.toLowerCase() === expectedTitle.toLowerCase()) {
-      return block.id;
-    }
-  }
-
-  return null;
+  return findDatabaseOnPages(apiKey, [pageId], expectedTitle, apiVersion);
 }
 
 export async function resolveNotionDatabaseId(): Promise<string> {
@@ -170,16 +332,37 @@ export async function resolveNotionDatabaseId(): Promise<string> {
   }
 
   const apiKey = await getNotionApiKey();
-  const databaseId = await findDatabaseOnPage(
+  const pageIds = env.NOTION_SEARCH_PAGE_IDS.split(",")
+    .map((id) => id.trim())
+    .filter(Boolean);
+
+  let databaseId = await findDatabaseOnPages(
     apiKey,
-    env.NOTION_SPRINTS_PAGE_ID,
+    pageIds,
     env.NOTION_DATABASE_TITLE,
     env.NOTION_API_VERSION
   );
 
+  if (!databaseId && env.NOTION_AUTO_CREATE_DATABASE) {
+    databaseId = await createRetellSessionsDatabase(
+      apiKey,
+      env.NOTION_SPRINTS_PAGE_ID,
+      env.NOTION_DATABASE_TITLE,
+      env.NOTION_API_VERSION
+    );
+    logger.info("Created Notion database for retell_sessions sync", { databaseId });
+  }
+
   if (!databaseId) {
+    const available = await discoverNotionDatabases();
+    const availableList = available
+      .map((db) => `${db.title} (${db.id})`)
+      .join("; ");
+
     throw new Error(
-      `Could not find Notion database "${env.NOTION_DATABASE_TITLE}" on page ${env.NOTION_SPRINTS_PAGE_ID}. Share the page with your integration or set NOTION_RETELL_DATABASE_ID.`
+      `Could not find Notion database "${env.NOTION_DATABASE_TITLE}" on pages ${pageIds.join(", ")}.` +
+        (availableList ? ` Available databases: ${availableList}.` : " No databases found on those pages.") +
+        " Share the pages with your integration, set NOTION_RETELL_DATABASE_ID, or NOTION_AUTO_CREATE_DATABASE=true."
     );
   }
 
@@ -320,6 +503,7 @@ export async function getNotionDatabaseInfo(): Promise<{
   databaseId?: string;
   title?: string;
   error?: string;
+  availableDatabases?: DiscoveredNotionDatabase[];
 }> {
   const env = getEnv();
 
@@ -339,7 +523,14 @@ export async function getNotionDatabaseInfo(): Promise<{
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return { success: false, error: message };
+    let availableDatabases: DiscoveredNotionDatabase[] = [];
+    try {
+      availableDatabases = await discoverNotionDatabases();
+    } catch {
+      availableDatabases = [];
+    }
+
+    return { success: false, error: message, availableDatabases };
   }
 }
 

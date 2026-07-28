@@ -20,6 +20,7 @@ export async function notionStatusHandler(_req: Request, res: Response): Promise
     refreshTokenConfigured: Boolean(env.NOTION_REFRESH_TOKEN),
     connection,
     database,
+    discoveredDatabases: database?.availableDatabases,
     liveSync: {
       onUpsert: env.NOTION_SYNC_ENABLED,
       intervalMs: env.NOTION_SYNC_INTERVAL_MS,
