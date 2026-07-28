@@ -62,6 +62,13 @@ const envSchema = z.object({
   SMTP_PASSWORD: z.string().optional(),
   SMTP_FROM: z.string().optional(),
   NOTION_API_KEY: z.string().min(1).optional(),
+  NOTION_CLIENT_ID: z.string().min(1).optional(),
+  NOTION_CLIENT_SECRET: z.string().min(1).optional(),
+  NOTION_REFRESH_TOKEN: z.string().min(1).optional(),
+  NOTION_REDIRECT_URI: z
+    .string()
+    .url()
+    .default("https://ai-calling-j1hu.onrender.com/auth/notion/callback"),
   NOTION_SPRINTS_PAGE_ID: z
     .string()
     .min(1)

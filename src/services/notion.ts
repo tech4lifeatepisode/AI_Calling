@@ -1,6 +1,7 @@
 import type { RetellSessionRow } from "../types/supabase.js";
 import { getEnv } from "./env.js";
 import { logger } from "./logger.js";
+import { refreshStoredNotionTokenIfNeeded } from "./notionAuth.js";
 
 const NOTION_BASE = "https://api.notion.com/v1";
 
@@ -14,10 +15,10 @@ function notionHeaders(apiKey: string, apiVersion: string): HeadersInit {
   };
 }
 
-function requireNotionApiKey(): string {
-  const apiKey = getEnv().NOTION_API_KEY;
+async function getNotionApiKey(): Promise<string> {
+  const apiKey = await refreshStoredNotionTokenIfNeeded();
   if (!apiKey) {
-    throw new Error("NOTION_API_KEY is required when NOTION_SYNC_ENABLED=true");
+    throw new Error("Notion is not connected. Open /auth/notion to authorize.");
   }
   return apiKey;
 }
@@ -168,7 +169,7 @@ export async function resolveNotionDatabaseId(): Promise<string> {
     return cachedDatabaseId;
   }
 
-  const apiKey = requireNotionApiKey();
+  const apiKey = await getNotionApiKey();
   const databaseId = await findDatabaseOnPage(
     apiKey,
     env.NOTION_SPRINTS_PAGE_ID,
@@ -228,7 +229,7 @@ export async function syncRetellSessionToNotion(
   }
 
   try {
-    const apiKey = requireNotionApiKey();
+    const apiKey = await getNotionApiKey();
     const databaseId = await resolveNotionDatabaseId();
     const properties = mapRowToNotionProperties(row);
     const existingPageId = await findNotionPageBySessionId(
@@ -322,17 +323,14 @@ export async function getNotionDatabaseInfo(): Promise<{
 }> {
   const env = getEnv();
 
-  if (!env.NOTION_API_KEY) {
-    return { success: false, error: "NOTION_API_KEY is not configured" };
+  if (!env.NOTION_API_KEY && !(await refreshStoredNotionTokenIfNeeded())) {
+    return { success: false, error: "Notion is not connected. Open /auth/notion to authorize." };
   }
 
   try {
     const databaseId = await resolveNotionDatabaseId();
-    const title = await getDatabaseTitle(
-      env.NOTION_API_KEY,
-      databaseId,
-      env.NOTION_API_VERSION
-    );
+    const apiKey = await getNotionApiKey();
+    const title = await getDatabaseTitle(apiKey, databaseId, env.NOTION_API_VERSION);
 
     return {
       success: true,

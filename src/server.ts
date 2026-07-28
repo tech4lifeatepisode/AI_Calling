@@ -8,6 +8,11 @@ import { syncCallDataHandler } from "./routes/syncCallData.js";
 import { syncNotionHandler } from "./routes/syncNotion.js";
 import { notionStatusHandler } from "./routes/notionStatus.js";
 import {
+  notionAuthorizeHandler,
+  notionCallbackHandler,
+  notionHomeHandler,
+} from "./routes/notionAuth.js";
+import {
   checkAvailabilityHandler,
   getPricingHandler,
   listSelectableRoomsHandler,
@@ -69,6 +74,16 @@ export function createApp(): Express {
   });
 
   app.get("/health", healthHandler);
+
+  app.get("/notion", (req, res) => {
+    void notionHomeHandler(req, res);
+  });
+
+  app.get("/auth/notion", notionAuthorizeHandler);
+
+  app.get("/auth/notion/callback", (req, res) => {
+    void notionCallbackHandler(req, res);
+  });
 
   app.get("/notion/status", (req, res) => {
     void notionStatusHandler(req, res);
