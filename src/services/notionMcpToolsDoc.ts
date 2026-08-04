@@ -161,20 +161,21 @@ async function appendBlockChildren(
   children: Array<Record<string, unknown>>,
   after?: string
 ): Promise<void> {
-  const url = new URL(`${NOTION_BASE}/blocks/${blockId}/children`);
+  const url = `${NOTION_BASE}/blocks/${blockId}/children`;
+  const body: Record<string, unknown> = { children };
   if (after) {
-    url.searchParams.set("after", after);
+    body.after = after;
   }
 
   const res = await fetch(url, {
     method: "PATCH",
     headers: notionHeaders(apiKey, apiVersion),
-    body: JSON.stringify({ children }),
+    body: JSON.stringify(body),
   });
 
   if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Notion append blocks failed (${res.status}): ${body}`);
+    const responseBody = await res.text();
+    throw new Error(`Notion append blocks failed (${res.status}): ${responseBody}`);
   }
 }
 
