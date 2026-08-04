@@ -35,10 +35,31 @@ async function getNotionApiKey(): Promise<string> {
   return apiKey;
 }
 
+const NOTION_RICH_TEXT_CHUNK_SIZE = 2000;
+const NOTION_RICH_TEXT_MAX_CHUNKS = 100;
+
+export function chunkRichTextForNotion(
+  value: string | null | undefined
+): Array<{ text: { content: string } }> {
+  const text = value ?? "";
+  if (!text) return [];
+
+  const chunks: Array<{ text: { content: string } }> = [];
+  for (
+    let offset = 0;
+    offset < text.length && chunks.length < NOTION_RICH_TEXT_MAX_CHUNKS;
+    offset += NOTION_RICH_TEXT_CHUNK_SIZE
+  ) {
+    chunks.push({
+      text: { content: text.slice(offset, offset + NOTION_RICH_TEXT_CHUNK_SIZE) },
+    });
+  }
+
+  return chunks;
+}
+
 function richText(value: string | null | undefined) {
-  const content = (value ?? "").slice(0, 2000);
-  if (!content) return [];
-  return [{ text: { content } }];
+  return chunkRichTextForNotion(value).slice(0, 1);
 }
 
 function mapRowToNotionProperties(row: RetellSessionRow) {
@@ -80,6 +101,9 @@ function mapRowToNotionProperties(row: RetellSessionRow) {
       row.latest_total_price != null ? { number: row.latest_total_price } : { number: null },
     Recording: row.recording_url ? { url: row.recording_url } : { url: null },
     "Retell log": row.public_log_url ? { url: row.public_log_url } : { url: null },
+    transcript_with_tool_calls: {
+      rich_text: chunkRichTextForNotion(row.transcript_with_tool_calls),
+    },
     "Supabase updated": row.updated_at
       ? { date: { start: row.updated_at } }
       : { date: null },
@@ -389,6 +413,7 @@ async function createRetellSessionsDatabase(
         "Total price": { number: {} },
         Recording: { url: {} },
         "Retell log": { url: {} },
+        transcript_with_tool_calls: { rich_text: {} },
         "Supabase updated": { date: {} },
       },
     }),

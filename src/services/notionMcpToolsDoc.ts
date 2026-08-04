@@ -345,22 +345,6 @@ function buildDocBlocks(syncedAt: string): Array<Record<string, unknown>> {
     },
   });
 
-  blocks.push({
-    object: "block",
-    type: "bulleted_list_item",
-    bulleted_list_item: {
-      rich_text: [
-        {
-          type: "text",
-          text: {
-            content:
-              "retell_sessions.transcript_with_tool_calls — stored in Supabase, not mapped to the Supabase retell_sessions Notion database.",
-          },
-        },
-      ],
-    },
-  });
-
   return blocks;
 }
 
