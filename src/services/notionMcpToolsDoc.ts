@@ -14,6 +14,8 @@ import {
 
 const NOTION_BASE = "https://api.notion.com/v1";
 export const MCP_TOOLS_DOC_MARKER = "ai-calling-mcp-tools-doc-v1";
+const NOTION_RATE_LIMIT_MAX_ATTEMPTS = 6;
+const NOTION_DELETE_DELAY_MS = 350;
 
 interface NotionBlock {
   id: string;
@@ -85,6 +87,38 @@ function headingLevel(block: NotionBlock): number | null {
   return null;
 }
 
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function notionFetch(
+  url: string | URL,
+  init: RequestInit,
+  label: string
+): Promise<Response> {
+  for (let attempt = 1; attempt <= NOTION_RATE_LIMIT_MAX_ATTEMPTS; attempt += 1) {
+    const res = await fetch(url, init);
+    if (res.status !== 429) {
+      return res;
+    }
+
+    if (attempt >= NOTION_RATE_LIMIT_MAX_ATTEMPTS) {
+      return res;
+    }
+
+    const retryAfterHeader = res.headers.get("Retry-After");
+    const retryAfterSeconds = retryAfterHeader ? Number(retryAfterHeader) : NaN;
+    const delayMs = Number.isFinite(retryAfterSeconds)
+      ? Math.max(retryAfterSeconds * 1000, 1000)
+      : Math.min(1000 * 2 ** attempt, 30_000);
+
+    logger.warn("Notion rate limited, retrying", { label, attempt, delayMs });
+    await sleep(delayMs);
+  }
+
+  throw new Error(`Notion request failed: ${label}`);
+}
+
 async function getNotionApiKey(): Promise<string> {
   const apiKey = await refreshStoredNotionTokenIfNeeded();
   if (!apiKey) {
@@ -120,9 +154,11 @@ async function listBlockChildren(
       url.searchParams.set("start_cursor", cursor);
     }
 
-    const res = await fetch(url, {
-      headers: notionHeaders(apiKey, apiVersion),
-    });
+    const res = await notionFetch(
+      url,
+      { headers: notionHeaders(apiKey, apiVersion) },
+      `listBlockChildren:${blockId}`
+    );
 
     if (!res.ok) {
       const body = await res.text();
@@ -143,10 +179,14 @@ async function listBlockChildren(
 }
 
 async function deleteBlock(apiKey: string, blockId: string, apiVersion: string): Promise<void> {
-  const res = await fetch(`${NOTION_BASE}/blocks/${blockId}`, {
-    method: "DELETE",
-    headers: notionHeaders(apiKey, apiVersion),
-  });
+  const res = await notionFetch(
+    `${NOTION_BASE}/blocks/${blockId}`,
+    {
+      method: "DELETE",
+      headers: notionHeaders(apiKey, apiVersion),
+    },
+    `deleteBlock:${blockId}`
+  );
 
   if (!res.ok) {
     const body = await res.text();
@@ -167,11 +207,15 @@ async function appendBlockChildren(
     body.after = after;
   }
 
-  const res = await fetch(url, {
-    method: "PATCH",
-    headers: notionHeaders(apiKey, apiVersion),
-    body: JSON.stringify(body),
-  });
+  const res = await notionFetch(
+    url,
+    {
+      method: "PATCH",
+      headers: notionHeaders(apiKey, apiVersion),
+      body: JSON.stringify(body),
+    },
+    `appendBlockChildren:${blockId}`
+  );
 
   if (!res.ok) {
     const responseBody = await res.text();
@@ -396,6 +440,9 @@ async function removeExistingDocBlocks(
 
   for (const blockId of toDelete) {
     await deleteBlock(apiKey, blockId, apiVersion);
+    if (NOTION_DELETE_DELAY_MS > 0) {
+      await sleep(NOTION_DELETE_DELAY_MS);
+    }
   }
 
   return toDelete.length;
