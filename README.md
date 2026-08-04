@@ -22,6 +22,7 @@ Retell call → Render MCP server → HubSpot Scheduler API + CRM → Supabase l
 | `GET /health` | No | Render health check |
 | `GET /notion/status` | No | Notion sync status + target database info |
 | `POST /cron/sync-notion` | Bearer | Backfill/sync `retell_sessions` → Notion |
+| `POST /cron/sync-notion-mcp-tools` | Bearer | Publish Retell MCP tools catalog to Notion page section |
 | `POST /mcp` | Bearer | MCP Streamable HTTP endpoint for Retell |
 | `POST /webhooks/retell` | Bearer | Retell post-call webhook → Supabase |
 | `POST /cron/sync-call-data` | Bearer | HubSpot deals (`ai_call_attempted=true`) → Retell calls → Supabase |
@@ -294,6 +295,30 @@ Check status:
 ```bash
 curl https://ai-calling-j1hu.onrender.com/notion/status
 ```
+
+### MCP tools catalog on the AI Calling page
+
+Publishes the Retell MCP tool inventory under **MCP/General Tools Implemented or Needed** on the [AI Calling page](https://app.notion.com/p/AI-Calling-3ab762e28bfc802b82dbcd3dfc1c05e3?t=3b2762e28bfc800d8bc100a975c6bd54).
+
+Source of truth: `src/mcp/toolCatalog.ts` (7 tools from `src/mcp/tools.ts`).
+
+```bash
+curl -X POST "https://ai-calling-j1hu.onrender.com/cron/sync-notion-mcp-tools" \
+  -H "Authorization: Bearer YOUR_MCP_SERVER_SECRET"
+```
+
+Local:
+
+```bash
+npm run sync:notion-mcp-tools
+```
+
+Re-runs replace the previous auto-synced block (idempotent).
+
+| Variable | Value |
+|----------|-------|
+| `NOTION_MCP_TOOLS_SECTION_TITLE` | `MCP/General Tools Implemented or Needed` |
+| `NOTION_MCP_TOOLS_SECTION_BLOCK_ID` | `3b2762e2-8bfc-800d-8bc1-00a975c6bd54` |
 
 ---
 

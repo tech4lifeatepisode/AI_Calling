@@ -6,6 +6,7 @@ import { healthHandler } from "./routes/health.js";
 import { retellWebhookHandler } from "./routes/retellWebhook.js";
 import { syncCallDataHandler } from "./routes/syncCallData.js";
 import { syncNotionHandler } from "./routes/syncNotion.js";
+import { syncNotionMcpToolsHandler } from "./routes/syncNotionMcpTools.js";
 import { setupNotionHandler } from "./routes/setupNotion.js";
 import { notionStatusHandler } from "./routes/notionStatus.js";
 import {
@@ -92,6 +93,10 @@ export function createApp(): Express {
 
   app.post("/cron/sync-notion", requireBearerAuth, (req, res) => {
     void syncNotionHandler(req, res);
+  });
+
+  app.post("/cron/sync-notion-mcp-tools", requireBearerAuth, (req, res) => {
+    void syncNotionMcpToolsHandler(req, res);
   });
 
   app.post("/cron/setup-notion", requireBearerAuth, (req, res) => {

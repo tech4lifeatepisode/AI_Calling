@@ -89,6 +89,10 @@ const envSchema = z.object({
     .transform((v) => v === "true"),
   NOTION_SYNC_INTERVAL_MS: z.coerce.number().default(300_000),
   NOTION_SYNC_INITIAL_DELAY_MS: z.coerce.number().default(30_000),
+  NOTION_MCP_TOOLS_SECTION_TITLE: z
+    .string()
+    .default("MCP/General Tools Implemented or Needed"),
+  NOTION_MCP_TOOLS_SECTION_BLOCK_ID: z.string().min(1).optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

@@ -26,5 +26,10 @@ export async function notionStatusHandler(_req: Request, res: Response): Promise
       onUpsert: env.NOTION_SYNC_ENABLED,
       intervalMs: env.NOTION_SYNC_INTERVAL_MS,
     },
+    mcpToolsDoc: {
+      sectionTitle: env.NOTION_MCP_TOOLS_SECTION_TITLE,
+      sectionBlockId: env.NOTION_MCP_TOOLS_SECTION_BLOCK_ID ?? null,
+      syncEndpoint: "POST /cron/sync-notion-mcp-tools",
+    },
   });
 }

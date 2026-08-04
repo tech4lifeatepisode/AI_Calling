@@ -12,7 +12,8 @@
     "typecheck": "tsc --noEmit",
     "test": "tsx --test src/**/*.test.ts",
     "backfill:calls": "tsx scripts/backfillCallSync.ts",
-    "backfill:notion": "tsx scripts/backfillNotionSync.ts"
+    "backfill:notion": "tsx scripts/backfillNotionSync.ts",
+    "sync:notion-mcp-tools": "tsx scripts/syncNotionMcpToolsDoc.ts"
   },
   "engines": {
     "node": ">=20 <=22"

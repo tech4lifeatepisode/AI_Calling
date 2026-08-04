@@ -97,6 +97,10 @@ services:
         value: "30000"
       - key: NOTION_API_VERSION
         value: "2022-06-28"
+      - key: NOTION_MCP_TOOLS_SECTION_TITLE
+        value: MCP/General Tools Implemented or Needed
+      - key: NOTION_MCP_TOOLS_SECTION_BLOCK_ID
+        value: 3b2762e2-8bfc-800d-8bc1-00a975c6bd54
       - key: NOTION_REDIRECT_URI
         value: https://ai-calling-j1hu.onrender.com/auth/notion/callback
       - key: NOTION_CLIENT_ID
