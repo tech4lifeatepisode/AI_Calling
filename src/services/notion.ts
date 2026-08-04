@@ -101,7 +101,7 @@ function mapRowToNotionProperties(row: RetellSessionRow) {
       row.latest_total_price != null ? { number: row.latest_total_price } : { number: null },
     Recording: row.recording_url ? { url: row.recording_url } : { url: null },
     "Retell log": row.public_log_url ? { url: row.public_log_url } : { url: null },
-    transcript: {
+    call_transcript: {
       rich_text: chunkRichTextForNotion(row.transcript),
     },
     transcript_with_tool_calls: {
@@ -416,7 +416,7 @@ async function createRetellSessionsDatabase(
         "Total price": { number: {} },
         Recording: { url: {} },
         "Retell log": { url: {} },
-        transcript: { rich_text: {} },
+        call_transcript: { rich_text: {} },
         transcript_with_tool_calls: { rich_text: {} },
         "Supabase updated": { date: {} },
       },

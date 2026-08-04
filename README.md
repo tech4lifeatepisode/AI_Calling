@@ -270,7 +270,7 @@ No new Supabase tables are required.
 
 On the Sprints page, under **Supabase retell_sessions**, create (or keep) a **table database** with these columns:
 
-Session ID (title), Call time, Duration (s), Status, Sentiment, Outcome, Contact, Email, Phone, Deal, Deal stage, Agent, Direction, Cost, Total price, Recording, Retell log, transcript, transcript_with_tool_calls, Supabase updated
+Session ID (title), Call time, Duration (s), Status, Sentiment, Outcome, Contact, Email, Phone, Deal, Deal stage, Agent, Direction, Cost, Total price, Recording, Retell log, call_transcript, transcript_with_tool_calls, Supabase updated
 
 **4. Set Render env vars**
 
