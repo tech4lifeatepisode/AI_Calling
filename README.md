@@ -280,8 +280,10 @@ Session ID (title), Call time, Duration (s), Status, Sentiment, Outcome, Contact
 | `NOTION_SPRINTS_PAGE_ID` | `3ab762e2-8bfc-802b-82db-cd3dfc1c05e3` |
 | `NOTION_DATABASE_TITLE` | `Supabase retell_sessions` |
 | `NOTION_SYNC_ENABLED` | `true` |
+| `NOTION_RETELL_DATABASE_ID` | `3ab762e2-8bfc-81ec-8245-c735f9e2bca1` |
+| `NOTION_AUTO_CREATE_DATABASE` | `false` |
 
-Optional: set `NOTION_RETELL_DATABASE_ID` if auto-discovery fails.
+Pin `NOTION_RETELL_DATABASE_ID` to your existing database so redeploys and rate limits never create duplicate tables.
 
 **5. Backfill existing rows**
 

@@ -4,6 +4,7 @@ import { logger } from "./logger.js";
 import { refreshStoredNotionTokenIfNeeded, tryRefreshNotionAccessToken, verifyNotionAccessToken } from "./notionAuth.js";
 
 const NOTION_BASE = "https://api.notion.com/v1";
+const NOTION_RATE_LIMIT_MAX_ATTEMPTS = 6;
 
 let cachedDatabaseId: string | null = null;
 
@@ -13,6 +14,38 @@ function notionHeaders(apiKey: string, apiVersion: string): HeadersInit {
     "Notion-Version": apiVersion,
     "Content-Type": "application/json",
   };
+}
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function notionFetch(
+  url: string | URL,
+  init: RequestInit,
+  label: string
+): Promise<Response> {
+  for (let attempt = 1; attempt <= NOTION_RATE_LIMIT_MAX_ATTEMPTS; attempt += 1) {
+    const res = await fetch(url, init);
+    if (res.status !== 429) {
+      return res;
+    }
+
+    if (attempt >= NOTION_RATE_LIMIT_MAX_ATTEMPTS) {
+      return res;
+    }
+
+    const retryAfterHeader = res.headers.get("Retry-After");
+    const retryAfterSeconds = retryAfterHeader ? Number(retryAfterHeader) : NaN;
+    const delayMs = Number.isFinite(retryAfterSeconds)
+      ? Math.max(retryAfterSeconds * 1000, 1000)
+      : Math.min(1000 * 2 ** attempt, 30_000);
+
+    logger.warn("Notion rate limited, retrying", { label, attempt, delayMs });
+    await sleep(delayMs);
+  }
+
+  throw new Error(`Notion request failed: ${label}`);
 }
 
 async function getNotionApiKey(): Promise<string> {
@@ -118,12 +151,19 @@ async function getDatabaseTitle(
   databaseId: string,
   apiVersion: string
 ): Promise<string | null> {
-  const res = await fetch(`${NOTION_BASE}/databases/${databaseId}`, {
-    headers: notionHeaders(apiKey, apiVersion),
-  });
+  const res = await notionFetch(
+    `${NOTION_BASE}/databases/${databaseId}`,
+    { headers: notionHeaders(apiKey, apiVersion) },
+    `getDatabaseTitle:${databaseId}`
+  );
+
+  if (res.status === 404) {
+    return null;
+  }
 
   if (!res.ok) {
-    return null;
+    const body = await res.text();
+    throw new Error(`Notion database lookup failed (${res.status}): ${body}`);
   }
 
   const data = (await res.json()) as {
@@ -158,12 +198,15 @@ async function listBlockChildren(
       url.searchParams.set("start_cursor", cursor);
     }
 
-    const res = await fetch(url, {
-      headers: notionHeaders(apiKey, apiVersion),
-    });
+    const res = await notionFetch(
+      url,
+      { headers: notionHeaders(apiKey, apiVersion) },
+      `listBlockChildren:${blockId}`
+    );
 
     if (!res.ok) {
-      return results;
+      const body = await res.text();
+      throw new Error(`Notion list blocks failed (${res.status}): ${body}`);
     }
 
     const data = (await res.json()) as {
@@ -199,12 +242,19 @@ async function getPageTitle(
   pageId: string,
   apiVersion: string
 ): Promise<string | null> {
-  const res = await fetch(`${NOTION_BASE}/pages/${pageId}`, {
-    headers: notionHeaders(apiKey, apiVersion),
-  });
+  const res = await notionFetch(
+    `${NOTION_BASE}/pages/${pageId}`,
+    { headers: notionHeaders(apiKey, apiVersion) },
+    `getPageTitle:${pageId}`
+  );
+
+  if (res.status === 404) {
+    return null;
+  }
 
   if (!res.ok) {
-    return null;
+    const body = await res.text();
+    throw new Error(`Notion page lookup failed (${res.status}): ${body}`);
   }
 
   const data = (await res.json()) as {
@@ -392,36 +442,40 @@ async function createRetellSessionsDatabase(
   title: string,
   apiVersion: string
 ): Promise<string> {
-  const res = await fetch(`${NOTION_BASE}/databases`, {
-    method: "POST",
-    headers: notionHeaders(apiKey, apiVersion),
-    body: JSON.stringify({
-      parent: { page_id: parentPageId },
-      title: [{ type: "text", text: { content: title } }],
-      properties: {
-        "Session ID": { title: {} },
-        "Call time": { date: {} },
-        "Duration (s)": { number: {} },
-        Status: { select: {} },
-        Sentiment: { select: {} },
-        Outcome: { select: {} },
-        Contact: { rich_text: {} },
-        Email: { email: {} },
-        Phone: { phone_number: {} },
-        Deal: { rich_text: {} },
-        "Deal stage": { select: {} },
-        Agent: { rich_text: {} },
-        Direction: { select: {} },
-        Cost: { number: {} },
-        "Total price": { number: {} },
-        Recording: { url: {} },
-        "Retell log": { url: {} },
-        call_transcript: { rich_text: {} },
-        transcript_with_tool_calls: { rich_text: {} },
-        "Supabase updated": { date: {} },
-      },
-    }),
-  });
+  const res = await notionFetch(
+    `${NOTION_BASE}/databases`,
+    {
+      method: "POST",
+      headers: notionHeaders(apiKey, apiVersion),
+      body: JSON.stringify({
+        parent: { page_id: parentPageId },
+        title: [{ type: "text", text: { content: title } }],
+        properties: {
+          "Session ID": { title: {} },
+          "Call time": { date: {} },
+          "Duration (s)": { number: {} },
+          Status: { select: {} },
+          Sentiment: { select: {} },
+          Outcome: { select: {} },
+          Contact: { rich_text: {} },
+          Email: { email: {} },
+          Phone: { phone_number: {} },
+          Deal: { rich_text: {} },
+          "Deal stage": { select: {} },
+          Agent: { rich_text: {} },
+          Direction: { select: {} },
+          Cost: { number: {} },
+          "Total price": { number: {} },
+          Recording: { url: {} },
+          "Retell log": { url: {} },
+          call_transcript: { rich_text: {} },
+          transcript_with_tool_calls: { rich_text: {} },
+          "Supabase updated": { date: {} },
+        },
+      }),
+    },
+    "createRetellSessionsDatabase"
+  );
 
   if (!res.ok) {
     const body = await res.text();
@@ -457,14 +511,29 @@ export async function resolveNotionDatabaseId(): Promise<string> {
     .map((id) => id.trim())
     .filter(Boolean);
 
-  let databaseId = await findDatabaseOnPages(
-    apiKey,
-    pageIds,
-    env.NOTION_DATABASE_TITLE,
-    env.NOTION_API_VERSION
-  );
+  let databaseId: string | null = null;
+  let discoveryError: Error | null = null;
+
+  try {
+    databaseId = await findDatabaseOnPages(
+      apiKey,
+      pageIds,
+      env.NOTION_DATABASE_TITLE,
+      env.NOTION_API_VERSION
+    );
+  } catch (err) {
+    discoveryError = err instanceof Error ? err : new Error(String(err));
+    logger.warn("Notion database discovery failed", { message: discoveryError.message });
+  }
 
   if (!databaseId && env.NOTION_AUTO_CREATE_DATABASE) {
+    if (discoveryError) {
+      throw new Error(
+        `Could not discover Notion database "${env.NOTION_DATABASE_TITLE}" due to API error: ${discoveryError.message}. ` +
+          "Set NOTION_RETELL_DATABASE_ID to skip discovery and avoid creating duplicate databases."
+      );
+    }
+
     const target = await findTargetPageForSection(
       apiKey,
       pageIds,
@@ -586,17 +655,21 @@ async function findNotionPageBySessionId(
   databaseId: string,
   apiVersion: string
 ): Promise<string | null> {
-  const res = await fetch(`${NOTION_BASE}/databases/${databaseId}/query`, {
-    method: "POST",
-    headers: notionHeaders(apiKey, apiVersion),
-    body: JSON.stringify({
-      filter: {
-        property: "Session ID",
-        title: { equals: sessionId },
-      },
-      page_size: 1,
-    }),
-  });
+  const res = await notionFetch(
+    `${NOTION_BASE}/databases/${databaseId}/query`,
+    {
+      method: "POST",
+      headers: notionHeaders(apiKey, apiVersion),
+      body: JSON.stringify({
+        filter: {
+          property: "Session ID",
+          title: { equals: sessionId },
+        },
+        page_size: 1,
+      }),
+    },
+    `findNotionPageBySessionId:${sessionId}`
+  );
 
   if (!res.ok) {
     const body = await res.text();
@@ -627,11 +700,15 @@ export async function syncRetellSessionToNotion(
     );
 
     if (existingPageId) {
-      const res = await fetch(`${NOTION_BASE}/pages/${existingPageId}`, {
-        method: "PATCH",
-        headers: notionHeaders(apiKey, env.NOTION_API_VERSION),
-        body: JSON.stringify({ properties }),
-      });
+      const res = await notionFetch(
+        `${NOTION_BASE}/pages/${existingPageId}`,
+        {
+          method: "PATCH",
+          headers: notionHeaders(apiKey, env.NOTION_API_VERSION),
+          body: JSON.stringify({ properties }),
+        },
+        `updateNotionPage:${existingPageId}`
+      );
 
       if (!res.ok) {
         const body = await res.text();
@@ -641,14 +718,18 @@ export async function syncRetellSessionToNotion(
       return { success: true, notionPageId: existingPageId };
     }
 
-    const res = await fetch(`${NOTION_BASE}/pages`, {
-      method: "POST",
-      headers: notionHeaders(apiKey, env.NOTION_API_VERSION),
-      body: JSON.stringify({
-        parent: { database_id: databaseId },
-        properties,
-      }),
-    });
+    const res = await notionFetch(
+      `${NOTION_BASE}/pages`,
+      {
+        method: "POST",
+        headers: notionHeaders(apiKey, env.NOTION_API_VERSION),
+        body: JSON.stringify({
+          parent: { database_id: databaseId },
+          properties,
+        }),
+      },
+      `createNotionPage:${row.session_id}`
+    );
 
     if (!res.ok) {
       const body = await res.text();

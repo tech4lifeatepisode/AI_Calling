@@ -88,7 +88,9 @@ services:
       - key: NOTION_DATABASE_TITLE
         value: Supabase retell_sessions
       - key: NOTION_AUTO_CREATE_DATABASE
-        value: "true"
+        value: "false"
+      - key: NOTION_RETELL_DATABASE_ID
+        value: 3ab762e2-8bfc-81ec-8245-c735f9e2bca1
       - key: NOTION_SYNC_ENABLED
         value: "true"
       - key: NOTION_SYNC_INTERVAL_MS
@@ -110,6 +112,4 @@ services:
       - key: NOTION_REFRESH_TOKEN
         sync: false
       - key: NOTION_API_KEY
-        sync: false
-      - key: NOTION_RETELL_DATABASE_ID
         sync: false
