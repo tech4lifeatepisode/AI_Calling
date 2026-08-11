@@ -44,6 +44,7 @@ export interface BookTourSuccess {
   timezone: string;
   calendarEventId: string;
   contactId?: string;
+  durationMinutes: number;
   messageForAgent: string;
   hubspotResponse: unknown;
 }
@@ -51,6 +52,7 @@ export interface BookTourSuccess {
 export interface BookTourFailure {
   success: false;
   error: string;
+  durationMinutes: number;
   fallbackMessageForAgent: string;
   hubspotResponse?: unknown;
 }

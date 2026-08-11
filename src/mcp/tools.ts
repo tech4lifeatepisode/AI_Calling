@@ -111,6 +111,7 @@ export function createMcpServer(): McpServer {
           const times = availableSlots.map((slot) => slot.displayTimeMadrid).join(", ");
           messageForAgent =
             `Only offer these exact HubSpot slots to the guest (do not invent other times): ${times}. ` +
+            "When calling book_tour, pass the exact startTime and durationMinutes from the chosen availableSlots entry. " +
             (availableSlots.length === 1
               ? "Ask if this time works."
               : "Offer one or two of these times and ask which works best.");
@@ -277,7 +278,7 @@ export function createMcpServer(): McpServer {
             ? bookingResult.startTime
             : parsed.startTime,
           scheduled_end_time: bookingResult.success ? bookingResult.endTime : null,
-          duration_minutes: parsed.durationMinutes ?? env.DEFAULT_TOUR_DURATION_MINUTES,
+          duration_minutes: bookingResult.durationMinutes,
           hubspot_slug: slug,
           hubspot_meeting_url: meetingUrl,
           hubspot_calendar_event_id: bookingResult.success

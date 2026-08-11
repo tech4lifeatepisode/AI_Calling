@@ -30,18 +30,24 @@ async function main(): Promise<void> {
   logger.info("Attempting booking", {
     tourType,
     startTime: slot.startTime,
+    durationMinutes: slot.durationMinutes,
     email,
   });
 
   const result = await bookTour({
     tourType,
     startTime: slot.startTime,
+    durationMinutes: slot.durationMinutes,
     email,
     firstName: process.env.TEST_BOOKING_FIRST_NAME ?? "Test",
     lastName: process.env.TEST_BOOKING_LAST_NAME ?? "Guest",
     phone: process.env.TEST_BOOKING_PHONE,
     likelyAvailableUserIds: slot.likelyAvailableUserIds,
   });
+
+  if (!result.success) {
+    throw new Error(result.error);
+  }
 
   logger.info("Booking result", { result });
 }

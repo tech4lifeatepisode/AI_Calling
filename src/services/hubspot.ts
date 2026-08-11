@@ -220,6 +220,49 @@ export async function getTourAvailability(
   return { slots, rawResponse: rawResponses };
 }
 
+function normalizeStartTimeIso(value: string): string {
+  return new Date(value).toISOString();
+}
+
+export function findSlotByStartTime(
+  slots: AvailableSlot[],
+  startTime: string
+): AvailableSlot | undefined {
+  const target = normalizeStartTimeIso(startTime);
+  return slots.find((slot) => normalizeStartTimeIso(slot.startTime) === target);
+}
+
+export async function resolveBookTourSlotDetails(
+  input: Pick<
+    BookTourInput,
+    "tourType" | "startTime" | "timezone" | "durationMinutes" | "likelyAvailableUserIds"
+  >
+): Promise<{ durationMinutes: number; likelyAvailableUserIds?: string[] }> {
+  const env = getEnv();
+  const timezone = input.timezone ?? env.DEFAULT_TIMEZONE;
+
+  if (input.durationMinutes !== undefined) {
+    return {
+      durationMinutes: input.durationMinutes,
+      likelyAvailableUserIds: input.likelyAvailableUserIds,
+    };
+  }
+
+  const { slots } = await getTourAvailability({ tourType: input.tourType, timezone });
+  const slot = findSlotByStartTime(slots, input.startTime);
+  if (slot) {
+    return {
+      durationMinutes: slot.durationMinutes,
+      likelyAvailableUserIds: input.likelyAvailableUserIds ?? slot.likelyAvailableUserIds,
+    };
+  }
+
+  return {
+    durationMinutes: env.DEFAULT_TOUR_DURATION_MINUTES,
+    likelyAvailableUserIds: input.likelyAvailableUserIds,
+  };
+}
+
 export async function getBookingInfo(
   tourType: TourType,
   timezone: string
@@ -337,7 +380,7 @@ export async function bookTour(input: BookTourInput): Promise<BookTourResult> {
   const env = getEnv();
   const slug = getSlugForTourType(input.tourType);
   const timezone = input.timezone ?? env.DEFAULT_TIMEZONE;
-  const durationMinutes = input.durationMinutes ?? env.DEFAULT_TOUR_DURATION_MINUTES;
+  const { durationMinutes, likelyAvailableUserIds } = await resolveBookTourSlotDetails(input);
   const durationMs = durationMinutes * 60 * 1000;
 
   const bookingInfoResult = await getBookingInfo(input.tourType, timezone);
@@ -345,6 +388,7 @@ export async function bookTour(input: BookTourInput): Promise<BookTourResult> {
     return {
       success: false,
       error: bookingInfoResult.error ?? "Failed to fetch HubSpot booking metadata",
+      durationMinutes,
       fallbackMessageForAgent:
         "I'm sorry, I couldn't complete the booking right now. I'll send you the tour links by WhatsApp so you can choose the time that works best for you.",
     };
@@ -365,7 +409,7 @@ export async function bookTour(input: BookTourInput): Promise<BookTourResult> {
     locale: "en",
     formFields,
     legalConsentResponses,
-    likelyAvailableUserIds: input.likelyAvailableUserIds ?? [],
+    likelyAvailableUserIds: likelyAvailableUserIds ?? [],
   };
 
   const params = new URLSearchParams({ timezone });
@@ -386,6 +430,7 @@ export async function bookTour(input: BookTourInput): Promise<BookTourResult> {
     return {
       success: false,
       error: errorMessage,
+      durationMinutes,
       fallbackMessageForAgent:
         "I'm sorry, I couldn't complete the booking right now. I'll send you the tour links by WhatsApp so you can choose the time that works best for you.",
       hubspotResponse: result.data ?? { error: result.errorText },
@@ -403,6 +448,7 @@ export async function bookTour(input: BookTourInput): Promise<BookTourResult> {
     timezone: data.bookingTimezone ?? timezone,
     calendarEventId: data.calendarEventId ?? "",
     contactId: data.contactId,
+    durationMinutes,
     messageForAgent: `The ${tourLabel} has been booked successfully.`,
     hubspotResponse: data,
   };

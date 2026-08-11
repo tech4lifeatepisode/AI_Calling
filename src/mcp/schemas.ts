@@ -33,7 +33,14 @@ export const getTourAvailabilityInputSchema = z.object({
 export const bookTourInputSchema = z.object({
   tourType: tourTypeSchema,
   startTime: z.string().min(1),
-  durationMinutes: z.number().int().positive().optional(),
+  durationMinutes: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe(
+      "Meeting duration in minutes from the chosen availableSlots entry. Optional — resolved from HubSpot availability when omitted."
+    ),
   timezone: z.string().optional(),
   email: z
     .string()
