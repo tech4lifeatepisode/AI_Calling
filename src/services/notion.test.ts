@@ -1,6 +1,26 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { chunkRichTextForNotion } from "./notion.js";
+import { chunkRichTextForNotion, normalizeTranscriptForNotion } from "./notion.js";
+
+describe("normalizeTranscriptForNotion", () => {
+  it("returns plain strings unchanged", () => {
+    assert.equal(normalizeTranscriptForNotion("Hello from Cara"), "Hello from Cara");
+  });
+
+  it("formats Retell transcript arrays as readable text", () => {
+    const normalized = normalizeTranscriptForNotion([
+      { role: "user", content: "Hola." },
+      { role: "agent", content: "Hi, I'm Cara." },
+    ]);
+
+    assert.equal(normalized, "user: Hola.\nagent: Hi, I'm Cara.");
+  });
+
+  it("returns empty string for nullish values", () => {
+    assert.equal(normalizeTranscriptForNotion(null), "");
+    assert.equal(normalizeTranscriptForNotion(undefined), "");
+  });
+});
 
 describe("chunkRichTextForNotion", () => {
   it("returns empty array for nullish values", () => {

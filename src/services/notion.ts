@@ -71,6 +71,51 @@ async function getNotionApiKey(): Promise<string> {
 const NOTION_RICH_TEXT_CHUNK_SIZE = 2000;
 const NOTION_RICH_TEXT_MAX_CHUNKS = 100;
 
+interface RetellTranscriptTurn {
+  role?: string;
+  content?: string;
+}
+
+export function normalizeTranscriptForNotion(value: unknown): string {
+  if (value == null) {
+    return "";
+  }
+
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .map((turn) => {
+        if (!turn || typeof turn !== "object") {
+          return "";
+        }
+
+        const { role, content } = turn as RetellTranscriptTurn;
+        const label = role?.trim();
+        const text = content?.trim();
+        if (!text) {
+          return "";
+        }
+
+        return label ? `${label}: ${text}` : text;
+      })
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  if (typeof value === "object") {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+
+  return String(value);
+}
+
 export function chunkRichTextForNotion(
   value: string | null | undefined
 ): Array<{ text: { content: string } }> {
@@ -135,10 +180,7 @@ function mapRowToNotionProperties(row: RetellSessionRow) {
     Recording: row.recording_url ? { url: row.recording_url } : { url: null },
     "Retell log": row.public_log_url ? { url: row.public_log_url } : { url: null },
     call_transcript: {
-      rich_text: chunkRichTextForNotion(row.transcript),
-    },
-    transcript_with_tool_calls: {
-      rich_text: chunkRichTextForNotion(row.transcript_with_tool_calls),
+      rich_text: chunkRichTextForNotion(normalizeTranscriptForNotion(row.transcript)),
     },
     "Supabase updated": row.updated_at
       ? { date: { start: row.updated_at } }
@@ -469,7 +511,6 @@ async function createRetellSessionsDatabase(
           Recording: { url: {} },
           "Retell log": { url: {} },
           call_transcript: { rich_text: {} },
-          transcript_with_tool_calls: { rich_text: {} },
           "Supabase updated": { date: {} },
         },
       }),
