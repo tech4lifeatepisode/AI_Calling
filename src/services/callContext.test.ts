@@ -23,6 +23,11 @@ describe("sanitizeGuestEmail", () => {
     assert.equal(sanitizeGuestEmail("need_email@example.com"), undefined);
     assert.equal(sanitizeGuestEmail("carolam79@icloud.com"), "carolam79@icloud.com");
   });
+
+  it("strips zero-width characters from emails", () => {
+    assert.equal(sanitizeGuestEmail("carolam79@icloud.com\u200B"), "carolam79@icloud.com");
+    assert.equal(sanitizeGuestEmail("{{contact_email}}"), undefined);
+  });
 });
 
 describe("extractHubspotDealIdFromMetadata", () => {

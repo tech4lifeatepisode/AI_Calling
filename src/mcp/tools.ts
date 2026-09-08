@@ -59,10 +59,22 @@ async function logToolCall(params: {
 function jsonResult(data: Record<string, unknown>) {
   // Keep payloads small and JSON-native for Retell MCP parsing.
   const { debugRawHubSpotResponse: _debug, ...safeData } = data;
+  let text: string;
+  try {
+    text = JSON.stringify(safeData);
+  } catch {
+    text = JSON.stringify({
+      success: false,
+      messageForAgent:
+        "I'm sorry, I couldn't complete the booking right now. I'll send you the tour links by WhatsApp so you can choose the time that works best for you.",
+      fallbackMessageForAgent:
+        "I'm sorry, I couldn't complete the booking right now. I'll send you the tour links by WhatsApp so you can choose the time that works best for you.",
+    });
+  }
 
   return {
-    content: [{ type: "text" as const, text: JSON.stringify(safeData) }],
-    structuredContent: safeData,
+    content: [{ type: "text" as const, text }],
+    structuredContent: JSON.parse(text) as Record<string, unknown>,
   };
 }
 
@@ -176,12 +188,35 @@ export function createMcpServer(): McpServer {
     "book_tour",
     {
       description:
-        "Books a HubSpot tour after the guest explicitly confirms the selected slot. Always pass sessionId (Retell call_id). Prefer hubspotDealId and hubspotContactId from call metadata — never use placeholder emails. Only tell the guest the tour is booked when this tool returns success: true.",
+        "Books a HubSpot tour after the guest explicitly confirms the selected slot. On every live call always pass email from contact_email, hubspotContactId from contact_id, hubspotDealId from deal_id, and sessionId from call_id. Never pass JSON null for those fields. Never use placeholder emails. Only tell the guest the tour is booked when this tool returns success: true.",
       inputSchema: bookTourInputSchema.shape,
     },
     async (input) => {
       const startedAt = Date.now();
-      const parsed = bookTourInputSchema.parse(input);
+      const bookingFailedMessage =
+        "I'm sorry, I couldn't complete the booking right now. I'll send you the tour links by WhatsApp so you can choose the time that works best for you. Do not tell the guest the tour is booked.";
+
+      try {
+      const parsedResult = bookTourInputSchema.safeParse(input);
+      if (!parsedResult.success) {
+        const response = {
+          success: false,
+          messageForAgent: bookingFailedMessage,
+          fallbackMessageForAgent: bookingFailedMessage,
+          error: parsedResult.error.issues.map((issue) => issue.message).join("; "),
+        };
+        await logToolCall({
+          toolName: "book_tour",
+          sessionId: typeof input?.sessionId === "string" ? input.sessionId : undefined,
+          status: "error",
+          request: input,
+          response,
+          errorMessage: parsedResult.error.message,
+          startedAt,
+        });
+        return jsonResult(response);
+      }
+      const parsed = parsedResult.data;
 
       const callContext = await resolveCallContext({
         sessionId: opt(parsed.sessionId),
@@ -238,7 +273,6 @@ export function createMcpServer(): McpServer {
         return jsonResult(response);
       }
 
-      try {
         const env = getEnv();
         const slug =
           parsed.tourType === "virtual"
@@ -319,9 +353,6 @@ export function createMcpServer(): McpServer {
           });
         }
 
-        const bookingFailedMessage =
-          "I'm sorry, I couldn't complete the booking right now. I'll send you the tour links by WhatsApp so you can choose the time that works best for you. Do not tell the guest the tour is booked.";
-
         const response = bookingResult.success
           ? {
               success: true,
@@ -337,7 +368,10 @@ export function createMcpServer(): McpServer {
               tourType: parsed.tourType,
               messageForAgent: bookingFailedMessage,
               fallbackMessageForAgent: bookingFailedMessage,
-              error: bookingResult.error,
+              error:
+                typeof bookingResult.error === "string"
+                  ? bookingResult.error.slice(0, 400)
+                  : bookingResult.error,
             };
 
         await logToolCall({
@@ -353,21 +387,21 @@ export function createMcpServer(): McpServer {
         return jsonResult(response);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        const bookingFailedMessage =
-          "I'm sorry, I couldn't complete the booking right now. I'll send you the tour links by WhatsApp so you can choose the time that works best for you. Do not tell the guest the tour is booked.";
         const response = {
           success: false,
-          tourType: parsed.tourType,
           messageForAgent: bookingFailedMessage,
           fallbackMessageForAgent: bookingFailedMessage,
-          error: message,
+          error: message.slice(0, 400),
         };
 
         await logToolCall({
           toolName: "book_tour",
-          sessionId: callContext.sessionId,
+          sessionId:
+            typeof (input as { sessionId?: unknown })?.sessionId === "string"
+              ? (input as { sessionId: string }).sessionId
+              : undefined,
           status: "error",
-          request: parsed,
+          request: input,
           response,
           errorMessage: message,
           startedAt,
@@ -381,7 +415,8 @@ export function createMcpServer(): McpServer {
   server.registerTool(
     "log_retell_session",
     {
-      description: "Saves Retell call/session metadata into Supabase.",
+      description:
+        "Saves Retell call/session metadata into Supabase. Always pass sessionId from call_id. Never pass JSON null.",
       inputSchema: logRetellSessionInputSchema.shape,
     },
     async (input) => {
@@ -434,7 +469,8 @@ export function createMcpServer(): McpServer {
   server.registerTool(
     "log_tour_preference",
     {
-      description: "Logs tour interest even if the guest does not complete booking.",
+      description:
+        "Logs tour interest even if the guest does not complete booking. On live calls pass guestEmail from contact_email, hubspotContactId from contact_id, hubspotDealId from deal_id, and sessionId from call_id. Never pass JSON null for those fields.",
       inputSchema: logTourPreferenceInputSchema.shape,
     },
     async (input) => {

@@ -178,19 +178,20 @@ When the guest wants a tour:
 9. If booking fails, say: *"No problem, I'll send you the tour links by WhatsApp so you can choose the time that works best for you."*
 10. Log the result with `log_retell_session` or `log_tour_preference`.
 
-**Email for booking:** Cara can pass `hubspotDealId` and/or `hubspotContactId` from Retell dynamic variables instead of asking for email — the middle layer looks up the contact email from HubSpot automatically.
+**Email for booking:** Map pre-call `get_hubspot_contact` output `email` to the Retell dynamic variable `contact_email`. Cara must pass `email: {{contact_email}}` on every `book_tour` call (also pass `hubspotDealId` / `hubspotContactId` when available). Never ask the guest for email. Never use placeholder addresses.
 
 **Required on every MCP tool call during a live call:**
 
-| Parameter | Value |
+| Parameter | Retell value |
 |-----------|-------|
-| `sessionId` | Retell `call_id` for the active call |
-| `hubspotDealId` | Deal ID from HubSpot workflow metadata (`metadata.object.objectId` when `objectType` is `DEAL`) or a Retell dynamic variable |
-| `hubspotContactId` | Associated HubSpot contact ID when available |
+| `email` | `{{contact_email}}` from pre-call Get Contact output |
+| `hubspotDealId` | `{{deal_id}}` |
+| `hubspotContactId` | `{{contact_id}}` |
+| `sessionId` | `{{call_id}}` |
 
-Never pass placeholder emails such as `need_email@example.com`. If booking fails, use the WhatsApp fallback from the tool response and **do not** tell the guest the tour is booked.
+Never pass JSON `null` for these fields. Never pass placeholder emails such as `need_email@example.com`. If booking fails, use the WhatsApp fallback from the tool response and **do not** tell the guest the tour is booked.
 
-Configure Retell **dynamic variables** in your HubSpot outbound-call workflow so Cara receives at least `hubspotDealId` (and ideally `hubspotContactId`) on every call.
+Configure Retell **dynamic variables** so the pre-call HubSpot tools populate `contact_email`, `deal_id`, and `contact_id` before the call starts.
 
 **After a successful booking:** If `TOUR_BOOKING_EMAIL_ENABLED=true`, a React Email notification is sent to `TOUR_BOOKING_NOTIFY_EMAIL` with the tour time plus links to the HubSpot deal and contact records.
 

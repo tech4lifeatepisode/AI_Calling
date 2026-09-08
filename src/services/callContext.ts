@@ -35,8 +35,8 @@ export function isPlaceholderEmail(email: string | null | undefined): boolean {
 }
 
 export function sanitizeGuestEmail(email: string | null | undefined): string | undefined {
-  const trimmed = email?.trim();
-  if (!trimmed || isPlaceholderEmail(trimmed)) {
+  const trimmed = email?.replace(/[\u200B-\u200D\uFEFF\u00A0]/g, "").trim();
+  if (!trimmed || isPlaceholderEmail(trimmed) || /^\{\{[^}]+\}\}$/.test(trimmed)) {
     return undefined;
   }
   return trimmed;

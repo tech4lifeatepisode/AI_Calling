@@ -7,16 +7,20 @@ const retellContextFields = {
   sessionId: z
     .string()
     .optional()
-    .describe("Retell call_id for this conversation. Always pass when available."),
+    .describe(
+      "Retell call_id for this live call. Always pass when available. Never pass JSON null."
+    ),
   hubspotContactId: z
     .string()
     .optional()
-    .describe("HubSpot contact ID from call metadata or Retell dynamic variables."),
+    .describe(
+      "HubSpot contact ID from the contact_id dynamic variable or pre-call get_hubspot_contact. Always pass on live calls. Never pass JSON null."
+    ),
   hubspotDealId: z
     .string()
     .optional()
     .describe(
-      "HubSpot deal ID from call metadata (e.g. metadata.object.objectId when objectType is DEAL)."
+      "HubSpot deal ID from the deal_id dynamic variable or pre-call get_hubspot_deal. Always pass on live calls. Never pass JSON null."
     ),
   execution_message: z.string().optional(),
 };
@@ -44,14 +48,22 @@ export const bookTourInputSchema = z.object({
   timezone: z.string().optional(),
   email: z
     .string()
-    .email()
     .optional()
     .describe(
-      "Guest email. Omit when hubspotDealId or hubspotContactId is passed — never use placeholder addresses."
+      "Guest email from pre-call get_hubspot_contact, using the contact_email dynamic variable. Always pass this on book_tour. Never use placeholders like need_email@example.com. Never pass JSON null."
     ),
-  firstName: z.string().optional(),
-  lastName: z.string().optional(),
-  phone: z.string().optional(),
+  firstName: z
+    .string()
+    .optional()
+    .describe("Guest first name from contact_first_name when available. Never pass JSON null."),
+  lastName: z
+    .string()
+    .optional()
+    .describe("Guest last name from contact_last_name when available. Never pass JSON null."),
+  phone: z
+    .string()
+    .optional()
+    .describe("Guest phone from contact_phone when available. Never pass JSON null."),
   hubspotContactId: retellContextFields.hubspotContactId,
   hubspotDealId: retellContextFields.hubspotDealId,
   sessionId: retellContextFields.sessionId,
@@ -63,7 +75,10 @@ export const logRetellSessionInputSchema = z.object({
   duration: z.union([z.number(), z.string()]).optional(),
   channelType: z.string().optional(),
   cost: z.union([z.number(), z.string()]).optional(),
-  sessionId: z.string().optional(),
+  sessionId: z
+    .string()
+    .optional()
+    .describe("Retell call_id. Always pass on live calls. Never pass JSON null."),
   endReason: z.string().optional(),
   sessionStatus: z.string().optional(),
   userSentiment: z.string().optional(),
@@ -92,8 +107,14 @@ export const logTourPreferenceInputSchema = z.object({
   tourType: z.enum(["virtual", "in_person", "unknown"]).optional(),
   requestedDay: z.string().optional(),
   requestedTime: z.string().optional(),
-  guestEmail: z.string().email().optional(),
-  guestPhone: z.string().optional(),
+  guestEmail: z
+    .string()
+    .optional()
+    .describe("Guest email from contact_email. Never pass JSON null."),
+  guestPhone: z
+    .string()
+    .optional()
+    .describe("Guest phone from contact_phone. Never pass JSON null."),
   status: z.enum(["interested", "not_interested", "asked_to_send_links", "booking_failed"]),
   execution_message: retellContextFields.execution_message,
 });
