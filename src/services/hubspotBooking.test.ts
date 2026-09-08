@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { findSlotByStartTime, normalizeLegalConsentOptions } from "./hubspot.js";
-import type { AvailableSlot, HubSpotBookingInfo } from "../types/hubspot.js";
+import { buildFormFields, findSlotByStartTime, normalizeLegalConsentOptions } from "./hubspot.js";
+import type { AvailableSlot, BookTourInput, HubSpotBookingInfo } from "../types/hubspot.js";
 
 describe("normalizeLegalConsentOptions", () => {
   it("returns empty array when consent options are missing", () => {
@@ -78,5 +78,30 @@ describe("findSlotByStartTime", () => {
 
   it("returns undefined when no slot matches", () => {
     assert.equal(findSlotByStartTime(slots, "2026-08-12T12:00:00.000Z"), undefined);
+  });
+});
+
+describe("buildFormFields", () => {
+  const guest: BookTourInput = {
+    tourType: "virtual",
+    startTime: "2026-09-11T08:30:00.000Z",
+    email: "guest@example.com",
+    firstName: "Ada",
+    lastName: "Lovelace",
+    phone: "+34600111222",
+  };
+
+  it("does not send extra HubSpot form fields for Episode tour pages", () => {
+    const bookingInfo: HubSpotBookingInfo = {
+      customParams: {
+        formFields: [
+          { name: "phone", required: false },
+          { name: "company", required: false },
+        ],
+      },
+    };
+
+    assert.deepEqual(buildFormFields(guest, undefined), []);
+    assert.deepEqual(buildFormFields(guest, bookingInfo), []);
   });
 });

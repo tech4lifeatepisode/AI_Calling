@@ -338,42 +338,14 @@ function buildLegalConsentResponses(
   }));
 }
 
-function buildFormFields(
-  input: BookTourInput,
-  bookingInfo: HubSpotBookingInfo | undefined
+export function buildFormFields(
+  _input: BookTourInput,
+  _bookingInfo?: HubSpotBookingInfo
 ): Array<{ name: string; value: string }> {
-  const fields: Array<{ name: string; value: string }> = [];
-
-  if (input.formFields?.length) {
-    fields.push(...input.formFields);
-  }
-
-  if (input.phone) {
-    const hasPhone = fields.some((f) => f.name.toLowerCase() === "phone");
-    if (!hasPhone) {
-      fields.push({ name: "phone", value: input.phone });
-    }
-  }
-
-  const rawFormFields = bookingInfo?.customParams?.formFields;
-  const requiredFields = Array.isArray(rawFormFields) ? rawFormFields : [];
-  for (const field of requiredFields) {
-    if (!field.required) continue;
-    const exists = fields.some((f) => f.name === field.name);
-    if (exists) continue;
-
-    if (field.name.toLowerCase() === "email" && input.email) {
-      fields.push({ name: field.name, value: input.email });
-    } else if (field.name.toLowerCase() === "firstname" && input.firstName) {
-      fields.push({ name: field.name, value: input.firstName });
-    } else if (field.name.toLowerCase() === "lastname" && input.lastName) {
-      fields.push({ name: field.name, value: input.lastName });
-    } else if (field.name.toLowerCase() === "phone" && input.phone) {
-      fields.push({ name: field.name, value: input.phone });
-    }
-  }
-
-  return fields;
+  // In-person and virtual Episode tour pages only collect first name, last name,
+  // and email (top-level Scheduler fields). Extra formFields such as phone caused
+  // HubSpot: "formFields contains invalid name(s)".
+  return [];
 }
 
 export async function bookTour(input: BookTourInput): Promise<BookTourResult> {

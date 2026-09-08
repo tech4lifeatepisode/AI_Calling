@@ -74,9 +74,15 @@ export interface HubSpotLegalConsentOption {
   consented: boolean;
 }
 
+export interface HubSpotMeetingFormField {
+  name: string;
+  label?: string;
+  required?: boolean;
+}
+
 export interface HubSpotBookingInfo {
   customParams?: {
-    formFields?: Array<{ name: string; label?: string; required?: boolean }>;
+    formFields?: HubSpotMeetingFormField[];
     legalConsentEnabled?: boolean;
     legalConsentOptions?: Array<{ communicationTypeId: string }>;
   };
