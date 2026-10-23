@@ -3,6 +3,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { requireBearerAuth } from "./services/auth.js";
 import { captureRawBody, requireRetellOrBearerAuth } from "./services/retellAuth.js";
 import { healthHandler } from "./routes/health.js";
+import { notionSyncHealthHandler } from "./routes/notionSyncHealth.js";
 import { retellWebhookHandler } from "./routes/retellWebhook.js";
 import { syncCallDataHandler } from "./routes/syncCallData.js";
 import { syncNotionHandler } from "./routes/syncNotion.js";
@@ -76,6 +77,9 @@ export function createApp(): Express {
   });
 
   app.get("/health", healthHandler);
+  app.get("/health/notion-sync", (req, res) => {
+    void notionSyncHealthHandler(req, res);
+  });
 
   app.get("/notion", (req, res) => {
     void notionHomeHandler(req, res);

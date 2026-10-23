@@ -1,12 +1,42 @@
 import type { RetellSessionRow } from "../types/supabase.js";
 import { getEnv } from "./env.js";
 import { logger } from "./logger.js";
-import { refreshStoredNotionTokenIfNeeded, tryRefreshNotionAccessToken, verifyNotionAccessToken } from "./notionAuth.js";
+import {
+  applyOAuthTokenToProcessEnv,
+  refreshNotionAccessToken,
+  refreshStoredNotionTokenIfNeeded,
+  rememberOAuthToken,
+  tryRefreshNotionAccessToken,
+  verifyNotionAccessToken,
+} from "./notionAuth.js";
+import { mapRowToNotionProperties } from "./notionMap.js";
+import { NOTION_SYNC_NAME } from "./notionCursor.js";
+import {
+  getSyncState,
+  resolveSyncError,
+  upsertSyncError,
+  upsertSyncState,
+} from "./supabase.js";
+
+export { chunkRichTextForNotion, normalizeTranscriptForNotion } from "./notionMap.js";
 
 const NOTION_BASE = "https://api.notion.com/v1";
+const NOTION_DATA_SOURCE_VERSION = "2025-09-03";
 const NOTION_RATE_LIMIT_MAX_ATTEMPTS = 6;
+const NOTION_REQUEST_GAP_MS = 350;
+const NOTION_OAUTH_STATE = "notion_oauth";
 
 let cachedDatabaseId: string | null = null;
+let cachedApiKey: { key: string; until: number } | null = null;
+let notionPace: Promise<void> = Promise.resolve();
+let notionNextAt = 0;
+
+export interface NotionSessionSyncResult {
+  success: boolean;
+  action?: "created" | "updated" | "skipped";
+  notionPageId?: string;
+  error?: string;
+}
 
 function notionHeaders(apiKey: string, apiVersion: string): HeadersInit {
   return {
@@ -20,172 +50,158 @@ async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function paceNotion(): Promise<void> {
+  const run = notionPace.then(async () => {
+    const wait = notionNextAt - Date.now();
+    if (wait > 0) {
+      await sleep(wait);
+    }
+    notionNextAt = Date.now() + NOTION_REQUEST_GAP_MS;
+  });
+  notionPace = run.then(
+    () => undefined,
+    () => undefined
+  );
+  return run;
+}
+
+function retryDelayMs(res: Response, attempt: number): number {
+  const header = res.headers.get("Retry-After");
+  if (header) {
+    const seconds = Number(header);
+    if (Number.isFinite(seconds)) {
+      return Math.max(seconds * 1000, 1000);
+    }
+    const date = Date.parse(header);
+    if (!Number.isNaN(date)) {
+      return Math.max(date - Date.now(), 1000);
+    }
+  }
+  return Math.min(1000 * 2 ** attempt, 30_000);
+}
+
+function shouldRetryStatus(status: number): boolean {
+  return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+}
+
 async function notionFetch(
   url: string | URL,
   init: RequestInit,
   label: string
 ): Promise<Response> {
   for (let attempt = 1; attempt <= NOTION_RATE_LIMIT_MAX_ATTEMPTS; attempt += 1) {
+    await paceNotion();
     const res = await fetch(url, init);
-    if (res.status !== 429) {
+    if (!shouldRetryStatus(res.status) || attempt >= NOTION_RATE_LIMIT_MAX_ATTEMPTS) {
       return res;
     }
 
-    if (attempt >= NOTION_RATE_LIMIT_MAX_ATTEMPTS) {
-      return res;
-    }
-
-    const retryAfterHeader = res.headers.get("Retry-After");
-    const retryAfterSeconds = retryAfterHeader ? Number(retryAfterHeader) : NaN;
-    const delayMs = Number.isFinite(retryAfterSeconds)
-      ? Math.max(retryAfterSeconds * 1000, 1000)
-      : Math.min(1000 * 2 ** attempt, 30_000);
-
-    logger.warn("Notion rate limited, retrying", { label, attempt, delayMs });
+    const delayMs = retryDelayMs(res, attempt);
+    await res.text().catch(() => "");
+    logger.warn("Notion request retrying", { label, attempt, status: res.status, delayMs });
     await sleep(delayMs);
   }
 
   throw new Error(`Notion request failed: ${label}`);
 }
 
-async function getNotionApiKey(): Promise<string> {
-  const apiKey = await refreshStoredNotionTokenIfNeeded();
-  if (!apiKey) {
-    throw new Error("Notion is not connected. Open /auth/notion to authorize.");
-  }
-
-  const verification = await verifyNotionAccessToken(apiKey);
-  if (!verification.valid) {
-    const refreshed = await tryRefreshNotionAccessToken();
-    if (refreshed) {
-      return refreshed;
-    }
-    throw new Error(
-      "Notion token is invalid. Re-authorize at /auth/notion and update NOTION_API_KEY and NOTION_REFRESH_TOKEN in Render."
-    );
-  }
-
-  return apiKey;
+function syncApiVersion(): string {
+  const env = getEnv();
+  return env.NOTION_RETELL_DATA_SOURCE_ID ? NOTION_DATA_SOURCE_VERSION : env.NOTION_API_VERSION;
 }
 
-const NOTION_RICH_TEXT_CHUNK_SIZE = 2000;
-const NOTION_RICH_TEXT_MAX_CHUNKS = 100;
-
-interface RetellTranscriptTurn {
-  role?: string;
-  content?: string;
+function retellQueryUrl(databaseId: string): string {
+  const env = getEnv();
+  if (env.NOTION_RETELL_DATA_SOURCE_ID) {
+    return `${NOTION_BASE}/data_sources/${env.NOTION_RETELL_DATA_SOURCE_ID}/query`;
+  }
+  return `${NOTION_BASE}/databases/${databaseId}/query`;
 }
 
-export function normalizeTranscriptForNotion(value: unknown): string {
-  if (value == null) {
-    return "";
+function retellPageParent(databaseId: string): Record<string, string> {
+  const env = getEnv();
+  if (env.NOTION_RETELL_DATA_SOURCE_ID) {
+    return {
+      type: "data_source_id",
+      data_source_id: env.NOTION_RETELL_DATA_SOURCE_ID,
+    };
   }
-
-  if (typeof value === "string") {
-    return value;
-  }
-
-  if (Array.isArray(value)) {
-    return value
-      .map((turn) => {
-        if (!turn || typeof turn !== "object") {
-          return "";
-        }
-
-        const { role, content } = turn as RetellTranscriptTurn;
-        const label = role?.trim();
-        const text = content?.trim();
-        if (!text) {
-          return "";
-        }
-
-        return label ? `${label}: ${text}` : text;
-      })
-      .filter(Boolean)
-      .join("\n");
-  }
-
-  if (typeof value === "object") {
-    try {
-      return JSON.stringify(value);
-    } catch {
-      return String(value);
-    }
-  }
-
-  return String(value);
+  return { type: "database_id", database_id: databaseId };
 }
 
-export function chunkRichTextForNotion(
-  value: string | null | undefined
-): Array<{ text: { content: string } }> {
-  const text = value ?? "";
-  if (!text) return [];
-
-  const chunks: Array<{ text: { content: string } }> = [];
-  for (
-    let offset = 0;
-    offset < text.length && chunks.length < NOTION_RICH_TEXT_MAX_CHUNKS;
-    offset += NOTION_RICH_TEXT_CHUNK_SIZE
-  ) {
-    chunks.push({
-      text: { content: text.slice(offset, offset + NOTION_RICH_TEXT_CHUNK_SIZE) },
+async function rememberRefreshedToken(accessToken: string, refreshToken: string | undefined): Promise<void> {
+  try {
+    await upsertSyncState({
+      name: NOTION_OAUTH_STATE,
+      meta: {
+        access_token: accessToken,
+        refresh_token: refreshToken ?? null,
+      },
     });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.warn("Could not persist rotated Notion OAuth token", { message });
+  }
+}
+
+async function getNotionApiKey(): Promise<string> {
+  if (cachedApiKey && cachedApiKey.until > Date.now()) {
+    return cachedApiKey.key;
   }
 
-  return chunks;
-}
+  const candidates: string[] = [];
+  const envKey = await refreshStoredNotionTokenIfNeeded();
+  if (envKey) {
+    candidates.push(envKey);
+  }
 
-function richText(value: string | null | undefined) {
-  return chunkRichTextForNotion(value).slice(0, 1);
-}
+  let storedRefresh: string | undefined;
+  try {
+    const stored = await getSyncState(NOTION_OAUTH_STATE);
+    const storedAccess =
+      typeof stored?.meta?.access_token === "string" ? stored.meta.access_token : undefined;
+    storedRefresh =
+      typeof stored?.meta?.refresh_token === "string" ? stored.meta.refresh_token : undefined;
+    if (storedAccess && !candidates.includes(storedAccess)) {
+      candidates.push(storedAccess);
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.warn("Could not read stored Notion OAuth token", { message });
+  }
 
-function mapRowToNotionProperties(row: RetellSessionRow) {
-  return {
-    "Session ID": {
-      title: [{ text: { content: row.session_id } }],
-    },
-    "Call time": row.session_time
-      ? { date: { start: row.session_time } }
-      : { date: null },
-    "Duration (s)":
-      row.duration_seconds != null ? { number: row.duration_seconds } : { number: null },
-    Status: row.session_status
-      ? { select: { name: row.session_status.slice(0, 100) } }
-      : { select: null },
-    Sentiment: row.user_sentiment
-      ? { select: { name: row.user_sentiment.slice(0, 100) } }
-      : { select: null },
-    Outcome: row.session_outcome
-      ? { select: { name: row.session_outcome.slice(0, 100) } }
-      : { select: null },
-    Contact: { rich_text: richText(row.hubspot_contact_name) },
-    Email: row.hubspot_contact_email
-      ? { email: row.hubspot_contact_email }
-      : { email: null },
-    Phone: row.hubspot_contact_phone
-      ? { phone_number: row.hubspot_contact_phone }
-      : { phone_number: null },
-    Deal: { rich_text: richText(row.hubspot_deal_name) },
-    "Deal stage": row.hubspot_deal_stage
-      ? { select: { name: row.hubspot_deal_stage.slice(0, 100) } }
-      : { select: null },
-    Agent: { rich_text: richText(row.agent_name) },
-    Direction: row.direction
-      ? { select: { name: row.direction.slice(0, 100) } }
-      : { select: null },
-    Cost: row.cost != null ? { number: row.cost } : { number: null },
-    "Total price":
-      row.latest_total_price != null ? { number: row.latest_total_price } : { number: null },
-    Recording: row.recording_url ? { url: row.recording_url } : { url: null },
-    "Retell log": row.public_log_url ? { url: row.public_log_url } : { url: null },
-    call_transcript: {
-      rich_text: chunkRichTextForNotion(normalizeTranscriptForNotion(row.transcript)),
-    },
-    "Supabase updated": row.updated_at
-      ? { date: { start: row.updated_at } }
-      : { date: null },
-  };
+  for (const candidate of candidates) {
+    const verification = await verifyNotionAccessToken(candidate);
+    if (verification.valid) {
+      cachedApiKey = { key: candidate, until: Date.now() + 10 * 60 * 1000 };
+      return candidate;
+    }
+  }
+
+  const refreshToken = storedRefresh ?? getEnv().NOTION_REFRESH_TOKEN;
+  if (refreshToken) {
+    try {
+      const refreshed = await refreshNotionAccessToken(refreshToken);
+      rememberOAuthToken(refreshed);
+      applyOAuthTokenToProcessEnv(refreshed);
+      await rememberRefreshedToken(refreshed.access_token, refreshed.refresh_token);
+      cachedApiKey = { key: refreshed.access_token, until: Date.now() + 10 * 60 * 1000 };
+      return refreshed.access_token;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.warn("Notion token refresh failed", { message });
+    }
+  }
+
+  const refreshed = await tryRefreshNotionAccessToken();
+  if (refreshed) {
+    cachedApiKey = { key: refreshed, until: Date.now() + 10 * 60 * 1000 };
+    return refreshed;
+  }
+
+  throw new Error(
+    "Notion token is invalid. Re-authorize at /auth/notion and update NOTION_API_KEY and NOTION_REFRESH_TOKEN in Render, or set NOTION_API_KEY to an internal integration secret."
+  );
 }
 
 async function getDatabaseTitle(
@@ -511,6 +527,7 @@ async function createRetellSessionsDatabase(
           Recording: { url: {} },
           "Retell log": { url: {} },
           call_transcript: { rich_text: {} },
+          transcript_with_tool_calls: { rich_text: {} },
           "Supabase updated": { date: {} },
         },
       }),
@@ -690,82 +707,174 @@ export async function setupNotionDatabase(): Promise<{
   };
 }
 
-async function findNotionPageBySessionId(
+interface NotionPageRef {
+  id: string;
+}
+
+async function queryRetellPages(
+  apiKey: string,
+  databaseId: string,
+  body: Record<string, unknown>
+): Promise<{ results: NotionPageRef[]; has_more: boolean; next_cursor: string | null }> {
+  const res = await notionFetch(
+    retellQueryUrl(databaseId),
+    {
+      method: "POST",
+      headers: notionHeaders(apiKey, syncApiVersion()),
+      body: JSON.stringify(body),
+    },
+    "queryRetellPages"
+  );
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Notion query failed (${res.status}): ${text}`);
+  }
+
+  const data = (await res.json()) as {
+    results?: NotionPageRef[];
+    has_more?: boolean;
+    next_cursor?: string | null;
+  };
+
+  return {
+    results: data.results ?? [],
+    has_more: Boolean(data.has_more),
+    next_cursor: data.next_cursor ?? null,
+  };
+}
+
+async function findNotionPagesBySessionId(
   sessionId: string,
   apiKey: string,
   databaseId: string,
-  apiVersion: string
-): Promise<string | null> {
-  const res = await notionFetch(
-    `${NOTION_BASE}/databases/${databaseId}/query`,
-    {
-      method: "POST",
-      headers: notionHeaders(apiKey, apiVersion),
-      body: JSON.stringify({
-        filter: {
-          property: "Session ID",
-          title: { equals: sessionId },
-        },
-        page_size: 1,
-      }),
+  cache?: Map<string, string>
+): Promise<string[]> {
+  const cached = cache?.get(sessionId);
+  if (cached) {
+    return [cached];
+  }
+
+  const data = await queryRetellPages(apiKey, databaseId, {
+    filter: {
+      property: "Session ID",
+      title: { equals: sessionId },
     },
-    `findNotionPageBySessionId:${sessionId}`
+    page_size: 10,
+  });
+
+  return data.results.map((page) => page.id);
+}
+
+async function archiveNotionPage(apiKey: string, pageId: string, sessionId: string): Promise<void> {
+  const res = await notionFetch(
+    `${NOTION_BASE}/pages/${pageId}`,
+    {
+      method: "PATCH",
+      headers: notionHeaders(apiKey, syncApiVersion()),
+      body: JSON.stringify({ archived: true }),
+    },
+    `archiveNotionPage:${pageId}`
   );
 
   if (!res.ok) {
     const body = await res.text();
-    throw new Error(`Notion query failed (${res.status}): ${body}`);
+    logger.warn("Could not archive duplicate Notion page", { sessionId, pageId, error: body });
+    return;
   }
 
-  const data = (await res.json()) as { results: Array<{ id: string }> };
-  return data.results[0]?.id ?? null;
+  logger.warn("Archived duplicate Notion page", { sessionId, pageId });
+}
+
+async function recordNotionSyncFailure(sessionId: string, error: string): Promise<void> {
+  try {
+    await upsertSyncError({
+      syncName: NOTION_SYNC_NAME,
+      sessionId,
+      error,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.error("Failed to record Notion sync error", { sessionId, message });
+  }
+}
+
+async function recordNotionSyncSuccess(sessionId: string): Promise<void> {
+  try {
+    await resolveSyncError(NOTION_SYNC_NAME, sessionId);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.warn("Failed to resolve Notion sync error", { sessionId, message });
+  }
+}
+
+async function retellDatabaseId(): Promise<string> {
+  const env = getEnv();
+  if (env.NOTION_RETELL_DATA_SOURCE_ID) {
+    return env.NOTION_RETELL_DATABASE_ID ?? env.NOTION_RETELL_DATA_SOURCE_ID;
+  }
+  return resolveNotionDatabaseId();
 }
 
 export async function syncRetellSessionToNotion(
-  row: RetellSessionRow
-): Promise<{ success: boolean; notionPageId?: string; error?: string }> {
+  row: RetellSessionRow,
+  options: { force?: boolean; cache?: Map<string, string> } = {}
+): Promise<NotionSessionSyncResult> {
   const env = getEnv();
-  if (!env.NOTION_SYNC_ENABLED) {
-    return { success: true };
+  if (!env.NOTION_SYNC_ENABLED && !options.force) {
+    return { success: true, action: "skipped" };
+  }
+
+  if (!row.session_id?.trim()) {
+    return { success: false, error: "session_id is required" };
   }
 
   try {
     const apiKey = await getNotionApiKey();
-    const databaseId = await resolveNotionDatabaseId();
+    const databaseId = await retellDatabaseId();
     const properties = mapRowToNotionProperties(row);
-    const existingPageId = await findNotionPageBySessionId(
+    const pageIds = await findNotionPagesBySessionId(
       row.session_id,
       apiKey,
       databaseId,
-      env.NOTION_API_VERSION
+      options.cache
     );
+    const [keeper, ...duplicates] = pageIds;
 
-    if (existingPageId) {
+    for (const duplicateId of duplicates) {
+      await archiveNotionPage(apiKey, duplicateId, row.session_id);
+    }
+
+    if (keeper) {
       const res = await notionFetch(
-        `${NOTION_BASE}/pages/${existingPageId}`,
+        `${NOTION_BASE}/pages/${keeper}`,
         {
           method: "PATCH",
-          headers: notionHeaders(apiKey, env.NOTION_API_VERSION),
+          headers: notionHeaders(apiKey, syncApiVersion()),
           body: JSON.stringify({ properties }),
         },
-        `updateNotionPage:${existingPageId}`
+        `updateNotionPage:${keeper}`
       );
 
       if (!res.ok) {
         const body = await res.text();
-        return { success: false, error: `Notion update failed (${res.status}): ${body}` };
+        const error = `Notion update failed (${res.status}): ${body}`;
+        await recordNotionSyncFailure(row.session_id, error);
+        return { success: false, error };
       }
 
-      return { success: true, notionPageId: existingPageId };
+      options.cache?.set(row.session_id, keeper);
+      await recordNotionSyncSuccess(row.session_id);
+      return { success: true, action: "updated", notionPageId: keeper };
     }
 
     const res = await notionFetch(
       `${NOTION_BASE}/pages`,
       {
         method: "POST",
-        headers: notionHeaders(apiKey, env.NOTION_API_VERSION),
+        headers: notionHeaders(apiKey, syncApiVersion()),
         body: JSON.stringify({
-          parent: { database_id: databaseId },
+          parent: retellPageParent(databaseId),
           properties,
         }),
       },
@@ -774,59 +883,110 @@ export async function syncRetellSessionToNotion(
 
     if (!res.ok) {
       const body = await res.text();
-      return { success: false, error: `Notion create failed (${res.status}): ${body}` };
+      const error = `Notion create failed (${res.status}): ${body}`;
+      await recordNotionSyncFailure(row.session_id, error);
+      return { success: false, error };
     }
 
     const created = (await res.json()) as { id: string };
-    return { success: true, notionPageId: created.id };
+    options.cache?.set(row.session_id, created.id);
+    await recordNotionSyncSuccess(row.session_id);
+    return { success: true, action: "created", notionPageId: created.id };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logger.warn("Notion sync failed", { sessionId: row.session_id, message });
+    await recordNotionSyncFailure(row.session_id, message);
+    cachedApiKey = null;
     return { success: false, error: message };
   }
 }
 
-export interface NotionSyncBatchResult {
-  total: number;
-  synced: number;
-  failed: number;
-  errors: Array<{ sessionId: string; error: string }>;
+interface NotionPropertyValue {
+  title?: Array<{ plain_text?: string }>;
+  rich_text?: Array<{ plain_text?: string }>;
+  number?: number | null;
+  select?: { name?: string } | null;
+  date?: { start?: string | null } | null;
 }
 
-export async function syncRetellSessionsBatch(
-  rows: RetellSessionRow[],
-  delayMs = 350
-): Promise<NotionSyncBatchResult> {
-  const result: NotionSyncBatchResult = {
-    total: rows.length,
-    synced: 0,
-    failed: 0,
-    errors: [],
-  };
+interface NotionAuditPage extends NotionPageRef {
+  properties?: Record<string, NotionPropertyValue>;
+}
 
-  for (const row of rows) {
-    const syncResult = await syncRetellSessionToNotion(row);
-    if (syncResult.success) {
-      result.synced += 1;
-    } else {
-      result.failed += 1;
-      result.errors.push({
-        sessionId: row.session_id,
-        error: syncResult.error ?? "Unknown error",
+function plainText(property: NotionPropertyValue | undefined): string {
+  const parts = property?.title ?? property?.rich_text ?? [];
+  return parts.map((part) => part.plain_text ?? "").join("");
+}
+
+export interface NotionSessionSnapshot {
+  pageId: string;
+  sessionId: string;
+  callTime: string | null;
+  cost: number | null;
+  durationSeconds: number | null;
+  outcome: string | null;
+  sentiment: string | null;
+  transcriptLength: number;
+  toolTranscriptLength: number;
+}
+
+export async function listNotionSessionSnapshots(): Promise<NotionSessionSnapshot[]> {
+  const apiKey = await getNotionApiKey();
+  const databaseId = await retellDatabaseId();
+  const snapshots: NotionSessionSnapshot[] = [];
+  let cursor: string | undefined;
+
+  do {
+    const res = await notionFetch(
+      retellQueryUrl(databaseId),
+      {
+        method: "POST",
+        headers: notionHeaders(apiKey, syncApiVersion()),
+        body: JSON.stringify({
+          page_size: 100,
+          start_cursor: cursor,
+          sorts: [{ property: "Call time", direction: "descending" }],
+        }),
+      },
+      "listNotionSessionSnapshots"
+    );
+
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`Notion query failed (${res.status}): ${body}`);
+    }
+
+    const data = (await res.json()) as {
+      results?: NotionAuditPage[];
+      has_more?: boolean;
+      next_cursor?: string | null;
+    };
+
+    for (const page of data.results ?? []) {
+      const properties = page.properties ?? {};
+      snapshots.push({
+        pageId: page.id,
+        sessionId: plainText(properties["Session ID"]),
+        callTime: properties["Call time"]?.date?.start ?? null,
+        cost: properties.Cost?.number ?? null,
+        durationSeconds: properties["Duration (s)"]?.number ?? null,
+        outcome: properties.Outcome?.select?.name ?? null,
+        sentiment: properties.Sentiment?.select?.name ?? null,
+        transcriptLength: plainText(properties.call_transcript).length,
+        toolTranscriptLength: plainText(properties.transcript_with_tool_calls).length,
       });
     }
 
-    if (delayMs > 0) {
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
-    }
-  }
+    cursor = data.has_more ? (data.next_cursor ?? undefined) : undefined;
+  } while (cursor);
 
-  return result;
+  return snapshots;
 }
 
 export async function getNotionDatabaseInfo(): Promise<{
   success: boolean;
   databaseId?: string;
+  dataSourceId?: string;
   title?: string;
   error?: string;
   availableDatabases?: DiscoveredNotionDatabase[];
@@ -838,8 +998,33 @@ export async function getNotionDatabaseInfo(): Promise<{
   }
 
   try {
-    const databaseId = await resolveNotionDatabaseId();
     const apiKey = await getNotionApiKey();
+    if (env.NOTION_RETELL_DATA_SOURCE_ID) {
+      const res = await notionFetch(
+        `${NOTION_BASE}/data_sources/${env.NOTION_RETELL_DATA_SOURCE_ID}`,
+        { headers: notionHeaders(apiKey, NOTION_DATA_SOURCE_VERSION) },
+        "getDataSource"
+      );
+      if (!res.ok) {
+        const body = await res.text();
+        return {
+          success: false,
+          databaseId: env.NOTION_RETELL_DATABASE_ID,
+          dataSourceId: env.NOTION_RETELL_DATA_SOURCE_ID,
+          error: `Notion data source lookup failed (${res.status}): ${body}`,
+        };
+      }
+      const data = (await res.json()) as { title?: Array<{ plain_text?: string }> };
+      const title = data.title?.map((part) => part.plain_text ?? "").join("") || null;
+      return {
+        success: true,
+        databaseId: env.NOTION_RETELL_DATABASE_ID,
+        dataSourceId: env.NOTION_RETELL_DATA_SOURCE_ID,
+        title: title ?? env.NOTION_DATABASE_TITLE,
+      };
+    }
+
+    const databaseId = await resolveNotionDatabaseId();
     const title = await getDatabaseTitle(apiKey, databaseId, env.NOTION_API_VERSION);
 
     return {

@@ -233,12 +233,15 @@ SMTP_PASSWORD=your_app_password npx tsx scripts/testTourBookingEmail.ts
 - `retell_sessions` — Retell call/session metadata plus HubSpot deal/contact enrichment (upsert by `session_id`)
 - `mcp_tool_calls` — MCP tool request/response logs
 - `tour_bookings` — Tour bookings and preferences
-- `sync_runs` — Audit log for HubSpot deal → Retell call sync jobs
+- `sync_runs` — Audit log for HubSpot deal → Retell call sync jobs and Notion sync runs
+- `sync_state` — Notion sync cursor (`notion_retell_sessions`)
+- `sync_errors` — Notion rows that failed and will be retried
 
 See [`supabase/schema.sql`](supabase/schema.sql) for full schema. Existing projects should also run:
 
 - [`supabase/migrations/20260701_call_sync.sql`](supabase/migrations/20260701_call_sync.sql)
 - [`supabase/migrations/20260701_hubspot_enrichment.sql`](supabase/migrations/20260701_hubspot_enrichment.sql)
+- [`supabase/migrations/20261023_notion_sync_state.sql`](supabase/migrations/20261023_notion_sync_state.sql)
 
 ---
 
@@ -250,8 +253,15 @@ No new Supabase tables are required.
 
 ### How live sync works
 
-1. **Instant** — every time this app upserts `retell_sessions` (Retell webhook, call sync, MCP tool)
-2. **Every 5 minutes** — polls Supabase for rows with a newer `updated_at` and pushes changes to Notion
+Upserts are keyed by **Session ID** (the Retell `call_id` / Supabase `session_id`). An existing Notion page is updated. A missing one is created. A second page with the same Session ID is archived.
+
+1. **Near real time** — after the Retell webhook, call sync, or `get_room_pricing` writes `retell_sessions`, that one session is synced in the background. The webhook response does not wait on Notion.
+2. **Every 5 minutes** — Render cron service `AI_Calling_notion_sync` runs `scripts/notion-incremental-sync.ts`. It reads rows with `updated_at` after the cursor in `sync_state`, 100 at a time. The cursor moves forward only through rows that succeeded, so a bad row is retried next run and does not block later rows from being written.
+3. **Failures** — the Notion error body is stored in `sync_errors` (`session_id` + error). Open errors are retried on the next cron run.
+
+Queries and new pages use Notion API `2025-09-03` with data source `3ab762e2-8bfc-8195-986f-000bb2230e5e`. Formula columns (`Cost (€)`, `Talk minutes`, `Country`, `Week (Sat start)`) are never written. `Cost` stays in cents.
+
+The in-process timer was removed. Render's free web service sleeps, so that timer could not keep the sync alive.
 
 ### Setup (5 steps)
 
@@ -277,23 +287,43 @@ Session ID (title), Call time, Duration (s), Status, Sentiment, Outcome, Contact
 
 | Variable | Value |
 |----------|-------|
-| `NOTION_API_KEY` | Internal integration secret |
-| `NOTION_SPRINTS_PAGE_ID` | `3ab762e2-8bfc-802b-82db-cd3dfc1c05e3` |
-| `NOTION_DATABASE_TITLE` | `Supabase retell_sessions` |
-| `NOTION_SYNC_ENABLED` | `true` |
+| `NOTION_API_KEY` | Internal integration secret (`secret_` or `ntn_`). Prefer this over a rotating OAuth refresh token. |
+| `NOTION_RETELL_DATA_SOURCE_ID` | `3ab762e2-8bfc-8195-986f-000bb2230e5e` |
 | `NOTION_RETELL_DATABASE_ID` | `3ab762e2-8bfc-81ec-8245-c735f9e2bca1` |
+| `SUPABASE_URL` | Supabase project URL |
+| `SUPABASE_SERVICE_ROLE_KEY` | Service role key |
+| `NOTION_SYNC_ENABLED` | `true` |
 | `NOTION_AUTO_CREATE_DATABASE` | `false` |
 
-Pin `NOTION_RETELL_DATABASE_ID` to your existing database so redeploys and rate limits never create duplicate tables.
+Also required by the app process, and copied onto the cron job from the web service: `MCP_SERVER_SECRET`, `HUBSPOT_ACCESS_TOKEN`, the HubSpot meeting URLs and slugs. `NOTION_CLIENT_ID`, `NOTION_CLIENT_SECRET`, and `NOTION_REFRESH_TOKEN` are only needed if you keep using OAuth instead of an internal integration secret.
 
-**5. Backfill existing rows**
+On the **Supabase retell_sessions** database, open **⋯ → Connections** and confirm the integration that owns `NOTION_API_KEY` is connected. A token that is valid but not shared with that database cannot query or create pages.
+
+Run this once in the Supabase SQL editor before the first deploy of this sync:
+
+`supabase/migrations/20261023_notion_sync_state.sql`
+
+**5. Backfill the gap since 2026-10-01**
 
 ```bash
-curl -X POST "https://ai-calling-j1hu.onrender.com/cron/sync-notion?full=true" \
-  -H "Authorization: Bearer YOUR_MCP_SERVER_SECRET"
+npm run sync:notion-check
+npm run backfill:notion -- --since 2026-10-01T00:00:00Z
+npm run sync:notion-check
 ```
 
-Check status:
+Dry run (counts only, no Notion writes):
+
+```bash
+npm run backfill:notion -- --since 2026-10-01T00:00:00Z --dry-run
+```
+
+Health (503 when the cursor is more than 30 minutes behind the newest Supabase row):
+
+```bash
+curl https://ai-calling-j1hu.onrender.com/health/notion-sync
+```
+
+Connection status:
 
 ```bash
 curl https://ai-calling-j1hu.onrender.com/notion/status

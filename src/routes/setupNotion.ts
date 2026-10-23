@@ -1,6 +1,6 @@
 import type { Request, Response } from "express";
 import { setupNotionDatabase } from "../services/notion.js";
-import { runNotionSync } from "../services/notionSync.js";
+import { runNotionBackfill } from "../services/notionSync.js";
 import { logger } from "../services/logger.js";
 
 export async function setupNotionHandler(req: Request, res: Response): Promise<void> {
@@ -8,7 +8,7 @@ export async function setupNotionHandler(req: Request, res: Response): Promise<v
     const setup = await setupNotionDatabase();
     const sync =
       req.query.sync === "true" || req.body?.sync === true
-        ? await runNotionSync({ full: true, syncType: "backfill" })
+        ? await runNotionBackfill({ since: "2026-10-01T00:00:00.000Z" })
         : null;
 
     res.json({

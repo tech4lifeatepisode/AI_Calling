@@ -30,7 +30,9 @@ describe("chunkRichTextForNotion", () => {
   });
 
   it("returns one chunk for short text", () => {
-    assert.deepEqual(chunkRichTextForNotion("hello"), [{ text: { content: "hello" } }]);
+    assert.deepEqual(chunkRichTextForNotion("hello"), [
+      { type: "text", text: { content: "hello" } },
+    ]);
   });
 
   it("splits text into 2000-character chunks", () => {
@@ -41,6 +43,7 @@ describe("chunkRichTextForNotion", () => {
     assert.equal(chunks[0]?.text.content.length, 2000);
     assert.equal(chunks[1]?.text.content.length, 2000);
     assert.equal(chunks[2]?.text.content.length, 500);
+    assert.equal(chunks[0]?.type, "text");
   });
 
   it("caps output at 100 chunks", () => {

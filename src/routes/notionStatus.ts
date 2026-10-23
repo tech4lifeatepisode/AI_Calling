@@ -15,6 +15,7 @@ export async function notionStatusHandler(_req: Request, res: Response): Promise
     sprintsPageId: env.NOTION_SPRINTS_PAGE_ID,
     databaseTitle: env.NOTION_DATABASE_TITLE,
     databaseIdConfigured: Boolean(env.NOTION_RETELL_DATABASE_ID),
+    dataSourceId: env.NOTION_RETELL_DATA_SOURCE_ID,
     oauthConfigured: Boolean(env.NOTION_CLIENT_ID && env.NOTION_CLIENT_SECRET),
     apiKeyConfigured: Boolean(env.NOTION_API_KEY),
     refreshTokenConfigured: Boolean(env.NOTION_REFRESH_TOKEN),
@@ -24,7 +25,8 @@ export async function notionStatusHandler(_req: Request, res: Response): Promise
     discoveredDatabases: database?.availableDatabases,
     liveSync: {
       onUpsert: env.NOTION_SYNC_ENABLED,
-      intervalMs: env.NOTION_SYNC_INTERVAL_MS,
+      cron: "*/5 * * * *",
+      health: "GET /health/notion-sync",
     },
     mcpToolsDoc: {
       sectionTitle: env.NOTION_MCP_TOOLS_SECTION_TITLE,

@@ -91,6 +91,8 @@ services:
         value: "false"
       - key: NOTION_RETELL_DATABASE_ID
         value: 3ab762e2-8bfc-81ec-8245-c735f9e2bca1
+      - key: NOTION_RETELL_DATA_SOURCE_ID
+        value: 3ab762e2-8bfc-8195-986f-000bb2230e5e
       - key: NOTION_SYNC_ENABLED
         value: "true"
       - key: NOTION_SYNC_INTERVAL_MS
@@ -113,3 +115,86 @@ services:
         sync: false
       - key: NOTION_API_KEY
         sync: false
+
+  - type: cron
+    name: AI_Calling_notion_sync
+    runtime: node
+    region: frankfurt
+    plan: starter
+    branch: main
+    schedule: "*/5 * * * *"
+    buildCommand: npm ci
+    startCommand: npx tsx scripts/notion-incremental-sync.ts
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NOTION_SYNC_ENABLED
+        value: "true"
+      - key: NOTION_AUTO_CREATE_DATABASE
+        value: "false"
+      - key: NOTION_RETELL_DATABASE_ID
+        value: 3ab762e2-8bfc-81ec-8245-c735f9e2bca1
+      - key: NOTION_RETELL_DATA_SOURCE_ID
+        value: 3ab762e2-8bfc-8195-986f-000bb2230e5e
+      - key: NOTION_API_VERSION
+        value: "2025-09-03"
+      - key: SUPABASE_URL
+        fromService:
+          type: web
+          name: AI_Calling
+          envVarKey: SUPABASE_URL
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        fromService:
+          type: web
+          name: AI_Calling
+          envVarKey: SUPABASE_SERVICE_ROLE_KEY
+      - key: NOTION_API_KEY
+        fromService:
+          type: web
+          name: AI_Calling
+          envVarKey: NOTION_API_KEY
+      - key: NOTION_REFRESH_TOKEN
+        fromService:
+          type: web
+          name: AI_Calling
+          envVarKey: NOTION_REFRESH_TOKEN
+      - key: NOTION_CLIENT_ID
+        fromService:
+          type: web
+          name: AI_Calling
+          envVarKey: NOTION_CLIENT_ID
+      - key: NOTION_CLIENT_SECRET
+        fromService:
+          type: web
+          name: AI_Calling
+          envVarKey: NOTION_CLIENT_SECRET
+      - key: MCP_SERVER_SECRET
+        fromService:
+          type: web
+          name: AI_Calling
+          envVarKey: MCP_SERVER_SECRET
+      - key: HUBSPOT_ACCESS_TOKEN
+        fromService:
+          type: web
+          name: AI_Calling
+          envVarKey: HUBSPOT_ACCESS_TOKEN
+      - key: HUBSPOT_IN_PERSON_MEETING_URL
+        fromService:
+          type: web
+          name: AI_Calling
+          envVarKey: HUBSPOT_IN_PERSON_MEETING_URL
+      - key: HUBSPOT_VIRTUAL_MEETING_URL
+        fromService:
+          type: web
+          name: AI_Calling
+          envVarKey: HUBSPOT_VIRTUAL_MEETING_URL
+      - key: HUBSPOT_IN_PERSON_SLUG
+        fromService:
+          type: web
+          name: AI_Calling
+          envVarKey: HUBSPOT_IN_PERSON_SLUG
+      - key: HUBSPOT_VIRTUAL_SLUG
+        fromService:
+          type: web
+          name: AI_Calling
+          envVarKey: HUBSPOT_VIRTUAL_SLUG

@@ -1,101 +1,286 @@
-import {
-  getLastSuccessfulSyncTimeByType,
-  insertSyncRun,
-  listRetellSessionsUpdatedSince,
-  updateSyncRun,
-} from "./supabase.js";
+import { getEnv } from "./env.js";
 import { logger } from "./logger.js";
-import { syncRetellSessionsBatch } from "./notion.js";
+import {
+  NOTION_SYNC_INITIAL_CURSOR,
+  NOTION_SYNC_NAME,
+  nextCursor,
+  type CursorRowResult,
+} from "./notionCursor.js";
+import { syncRetellSessionToNotion } from "./notion.js";
+import {
+  countRetellSessionsTouchedSince,
+  getRetellSessionsByIds,
+  getSyncState,
+  insertSyncRun,
+  listOpenSyncErrorSessionIds,
+  listRetellSessionsTouchedSince,
+  listRetellSessionsUpdatedAfter,
+  resolveSyncError,
+  updateSyncRun,
+  upsertSyncState,
+  type SyncStateRow,
+} from "./supabase.js";
+import type { RetellSessionRow } from "../types/supabase.js";
 
-const NOTION_SYNC_OVERLAP_MS = 5 * 60 * 1000;
-
-export interface NotionSyncOptions {
-  full?: boolean;
-  syncType?: "backfill" | "incremental" | "manual";
-  limit?: number;
-}
+const PAGE_SIZE = 100;
 
 export interface NotionSyncResult {
   syncRunId?: string;
   total: number;
+  created: number;
+  updated: number;
   synced: number;
   failed: number;
   errors: Array<{ sessionId: string; error: string }>;
+  cursor: string | null;
+  dryRun?: boolean;
 }
 
-export async function runNotionSync(options: NotionSyncOptions = {}): Promise<NotionSyncResult> {
-  const syncType = options.syncType ?? (options.full ? "backfill" : "incremental");
-  const limit = Math.min(Math.max(options.limit ?? 500, 1), 1000);
-
-  const result: NotionSyncResult = {
+function emptyResult(cursor: string | null): NotionSyncResult {
+  return {
     total: 0,
+    created: 0,
+    updated: 0,
     synced: 0,
     failed: 0,
     errors: [],
+    cursor,
   };
+}
 
-  const syncRun = await insertSyncRun({
-    sync_type: `notion_${syncType}`,
-    status: "running",
-    metadata: { full: Boolean(options.full), limit },
-  });
-
-  if (!syncRun.id) {
-    throw new Error(syncRun.error ?? "Failed to create sync_runs row");
+async function saveCursorIfAhead(current: string | null, next: string | null): Promise<string | null> {
+  if (!next) {
+    return current;
+  }
+  if (current && Date.parse(current) >= Date.parse(next)) {
+    return current;
   }
 
-  result.syncRunId = syncRun.id;
+  await upsertSyncState({
+    name: NOTION_SYNC_NAME,
+    cursor: next,
+    meta: { last_row_success_at: new Date().toISOString() },
+  });
+  return next;
+}
+
+async function syncRows(
+  rows: RetellSessionRow[],
+  cache: Map<string, string>,
+  result: NotionSyncResult
+): Promise<CursorRowResult[]> {
+  const outcomes: CursorRowResult[] = [];
+
+  for (const row of rows) {
+    const synced = await syncRetellSessionToNotion(row, { force: true, cache });
+    result.total += 1;
+    if (synced.success && synced.action !== "skipped") {
+      result.synced += 1;
+      if (synced.action === "created") {
+        result.created += 1;
+      } else {
+        result.updated += 1;
+      }
+      outcomes.push({ updatedAt: row.updated_at ?? new Date(0).toISOString(), ok: true });
+    } else if (!synced.success) {
+      result.failed += 1;
+      result.errors.push({
+        sessionId: row.session_id,
+        error: synced.error ?? "Unknown error",
+      });
+      logger.warn("Notion row sync failed", {
+        sessionId: row.session_id,
+        error: synced.error,
+      });
+      outcomes.push({ updatedAt: row.updated_at ?? new Date(0).toISOString(), ok: false });
+    }
+  }
+
+  return outcomes;
+}
+
+async function retryOpenErrors(
+  cache: Map<string, string>,
+  result: NotionSyncResult
+): Promise<Set<string>> {
+  const sessionIds = await listOpenSyncErrorSessionIds(NOTION_SYNC_NAME, PAGE_SIZE);
+  const rows = await getRetellSessionsByIds(sessionIds);
+  const found = new Set(rows.map((row) => row.session_id));
+
+  for (const sessionId of sessionIds) {
+    if (!found.has(sessionId)) {
+      await resolveSyncError(NOTION_SYNC_NAME, sessionId);
+    }
+  }
+
+  await syncRows(rows, cache, result);
+  return found;
+}
+
+async function markRun(meta: Record<string, unknown>): Promise<void> {
+  await upsertSyncState({
+    name: NOTION_SYNC_NAME,
+    meta: { ...meta, last_run_at: new Date().toISOString() },
+  });
+}
+
+export async function runNotionIncrementalSync(): Promise<NotionSyncResult> {
+  if (!getEnv().NOTION_SYNC_ENABLED) {
+    logger.info("Notion sync skipped; NOTION_SYNC_ENABLED is false");
+    return emptyResult(null);
+  }
+
+  const startedAt = Date.now();
+  const state = await getSyncState(NOTION_SYNC_NAME);
+  const storedCursor = state?.cursor ?? null;
+  let cursor = storedCursor ?? NOTION_SYNC_INITIAL_CURSOR;
+  const cache = new Map<string, string>();
+  const result = emptyResult(cursor);
+
+  logger.info("Notion sync run started", {
+    mode: "incremental",
+    cursor,
+    pageSize: PAGE_SIZE,
+  });
+
+  const syncRun = await insertSyncRun({
+    sync_type: "notion_incremental",
+    status: "running",
+    metadata: { cursor },
+  });
 
   try {
-    const lastSync = options.full ? null : await getLastSuccessfulSyncTimeByType("notion");
-    const updatedSince =
-      lastSync !== null ? new Date(lastSync.getTime() - NOTION_SYNC_OVERLAP_MS) : undefined;
+    const retried = await retryOpenErrors(cache, result);
+    const rows = (await listRetellSessionsUpdatedAfter(cursor, PAGE_SIZE)).filter(
+      (row) => !retried.has(row.session_id)
+    );
+    const outcomes = await syncRows(rows, cache, result);
+    const advanced = rows.length === 0 && retried.size === 0 ? cursor : nextCursor(cursor, outcomes);
+    cursor = (await saveCursorIfAhead(storedCursor, advanced)) ?? cursor;
+    result.cursor = cursor;
 
-    const rows = updatedSince
-      ? await listRetellSessionsUpdatedSince(updatedSince, limit)
-      : await listRetellSessionsUpdatedSince(new Date(0), limit);
-
-    result.total = rows.length;
-
-    logger.info("Starting Notion sync", {
-      syncType,
-      full: Boolean(options.full),
-      updatedSince: updatedSince?.toISOString() ?? null,
-      rowCount: rows.length,
+    await markRun({
+      last_mode: "incremental",
+      created: result.created,
+      updated: result.updated,
+      failed: result.failed,
     });
 
-    const batch = await syncRetellSessionsBatch(rows, 350);
-    result.synced = batch.synced;
-    result.failed = batch.failed;
-    result.errors = batch.errors;
+    if (syncRun.id) {
+      await updateSyncRun(syncRun.id, {
+        status: "success",
+        completed_at: new Date().toISOString(),
+        sessions_upserted: result.synced,
+        sessions_skipped: result.failed,
+        error_count: result.failed,
+        errors: result.errors.length ? result.errors : null,
+        metadata: { cursor, created: result.created, updated: result.updated, failed: result.failed },
+      });
+      result.syncRunId = syncRun.id;
+    }
 
-    await updateSyncRun(syncRun.id, {
-      status: "success",
-      completed_at: new Date().toISOString(),
-      sessions_upserted: batch.synced,
-      sessions_skipped: batch.failed,
-      error_count: batch.failed,
-      errors: batch.errors.length ? batch.errors : null,
-      metadata: {
-        full: Boolean(options.full),
-        total: batch.total,
-      },
-    });
-
-    logger.info("Notion sync completed", {
-      syncRunId: syncRun.id,
-      ...result,
+    logger.info("Notion sync run finished", {
+      mode: "incremental",
+      processed: result.total,
+      created: result.created,
+      updated: result.updated,
+      failed: result.failed,
+      cursor,
+      durationMs: Date.now() - startedAt,
     });
 
     return result;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    await updateSyncRun(syncRun.id, {
-      status: "failed",
-      completed_at: new Date().toISOString(),
-      error_count: result.failed + 1,
-      errors: [...result.errors, { error: message }],
-    });
+    if (syncRun.id) {
+      await updateSyncRun(syncRun.id, {
+        status: "failed",
+        completed_at: new Date().toISOString(),
+        error_count: result.failed + 1,
+        errors: [...result.errors, { error: message }],
+      }).catch(() => undefined);
+    }
+    logger.error("Notion sync run failed", { mode: "incremental", message });
     throw err;
   }
+}
+
+export async function runNotionBackfill(options: {
+  since: string;
+  dryRun?: boolean;
+}): Promise<NotionSyncResult> {
+  const since = new Date(options.since);
+  if (Number.isNaN(since.getTime())) {
+    throw new Error(`Invalid --since value: ${options.since}`);
+  }
+  const sinceIso = since.toISOString();
+  const totalMatching = await countRetellSessionsTouchedSince(sinceIso);
+
+  if (options.dryRun) {
+    const result = emptyResult(null);
+    result.total = totalMatching;
+    result.dryRun = true;
+    logger.info("Notion backfill dry run", { since: sinceIso, rows: totalMatching });
+    return result;
+  }
+
+  const startedAt = Date.now();
+  const state = await getSyncState(NOTION_SYNC_NAME);
+  let cursor = state?.cursor ?? null;
+  let blocked = false;
+  const cache = new Map<string, string>();
+  const result = emptyResult(cursor);
+
+  logger.info("Notion sync run started", {
+    mode: "backfill",
+    since: sinceIso,
+    rows: totalMatching,
+    cursor,
+  });
+
+  let offset = 0;
+  for (;;) {
+    const rows = await listRetellSessionsTouchedSince(sinceIso, offset, PAGE_SIZE);
+    if (rows.length === 0) {
+      break;
+    }
+
+    const outcomes = await syncRows(rows, cache, result);
+    if (!blocked) {
+      if (outcomes.some((outcome) => !outcome.ok)) {
+        blocked = true;
+      }
+      cursor = await saveCursorIfAhead(cursor, nextCursor(cursor, outcomes));
+      result.cursor = cursor;
+    }
+
+    if (rows.length < PAGE_SIZE) {
+      break;
+    }
+    offset += PAGE_SIZE;
+  }
+
+  await markRun({
+    last_mode: "backfill",
+    since: sinceIso,
+    created: result.created,
+    updated: result.updated,
+    failed: result.failed,
+  });
+
+  logger.info("Notion sync run finished", {
+    mode: "backfill",
+    processed: result.total,
+    created: result.created,
+    updated: result.updated,
+    failed: result.failed,
+    cursor: result.cursor,
+    durationMs: Date.now() - startedAt,
+  });
+
+  return result;
+}
+
+export async function readNotionSyncCursor(): Promise<SyncStateRow | null> {
+  return getSyncState(NOTION_SYNC_NAME);
 }

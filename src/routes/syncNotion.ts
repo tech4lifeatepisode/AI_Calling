@@ -1,6 +1,6 @@
 import type { Request, Response } from "express";
 import { setupNotionDatabase } from "../services/notion.js";
-import { runNotionSync } from "../services/notionSync.js";
+import { runNotionBackfill, runNotionIncrementalSync } from "../services/notionSync.js";
 import { logger } from "../services/logger.js";
 
 export async function syncNotionHandler(req: Request, res: Response): Promise<void> {
@@ -16,16 +16,16 @@ export async function syncNotionHandler(req: Request, res: Response): Promise<vo
       req.body?.mode === "backfill" ||
       setup;
 
-    const limitRaw = req.query.limit ?? req.body?.limit;
-    const limit = limitRaw != null ? Number(limitRaw) : undefined;
-
     const setupResult = setup ? await setupNotionDatabase() : null;
 
-    const result = await runNotionSync({
-      full,
-      syncType: full ? "backfill" : "manual",
-      limit,
-    });
+    const since =
+      (typeof req.query.since === "string" ? req.query.since : undefined) ??
+      (typeof req.body?.since === "string" ? req.body.since : undefined);
+
+    const result =
+      full || since
+        ? await runNotionBackfill({ since: since ?? "2026-10-01T00:00:00Z" })
+        : await runNotionIncrementalSync();
 
     res.json({
       success: true,

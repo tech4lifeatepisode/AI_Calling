@@ -9,7 +9,7 @@ import type {
 } from "../types/supabase.js";
 import { getEnv } from "./env.js";
 import { logger } from "./logger.js";
-import { syncRetellSessionToNotion } from "./notion.js";
+import { enqueueRetellSessionNotionSync } from "./notionSyncQueue.js";
 
 let client: SupabaseClient | null = null;
 
@@ -41,14 +41,7 @@ export async function upsertRetellSession(
       return { success: false, error: error.message };
     }
 
-    void syncRetellSessionToNotion(row).then((notionResult) => {
-      if (!notionResult.success) {
-        logger.warn("Notion sync after upsert failed", {
-          sessionId: row.session_id,
-          error: notionResult.error,
-        });
-      }
-    });
+    enqueueRetellSessionNotionSync(row.session_id);
 
     return { success: true };
   } catch (err) {
@@ -228,17 +221,7 @@ export async function updateRetellSessionPricing(
       return { success: false, error: error.message };
     }
 
-    const updated = await getRetellSessionBySessionId(session_id);
-    if (updated) {
-      void syncRetellSessionToNotion(updated).then((notionResult) => {
-        if (!notionResult.success) {
-          logger.warn("Notion sync after pricing update failed", {
-            sessionId: session_id,
-            error: notionResult.error,
-          });
-        }
-      });
-    }
+    enqueueRetellSessionNotionSync(session_id);
 
     return { success: true };
   } catch (err) {
@@ -342,4 +325,277 @@ export async function insertRoomPricingRequest(
     logger.warn("Supabase insertRoomPricingRequest exception", { message });
     return { success: false, error: message };
   }
+}
+
+export interface SyncStateRow {
+  name: string;
+  cursor: string | null;
+  updated_at: string | null;
+  meta: Record<string, unknown> | null;
+}
+
+interface PostgrestErrorLike {
+  message: string;
+  code?: string;
+}
+
+function throwSupabase(error: PostgrestErrorLike, label: string): never {
+  const missingTable =
+    error.code === "42P01" ||
+    error.code === "PGRST205" ||
+    /sync_state|sync_errors/.test(error.message);
+  const hint = missingTable
+    ? " Run supabase/migrations/20261023_notion_sync_state.sql in the Supabase SQL editor."
+    : "";
+  throw new Error(`${label}: ${error.message}.${hint}`);
+}
+
+export async function getSyncState(name: string): Promise<SyncStateRow | null> {
+  const { data, error } = await getClient()
+    .from("sync_state")
+    .select("name, cursor, updated_at, meta")
+    .eq("name", name)
+    .maybeSingle();
+
+  if (error) {
+    throwSupabase(error, "getSyncState");
+  }
+
+  return (data as SyncStateRow | null) ?? null;
+}
+
+export async function upsertSyncState(input: {
+  name: string;
+  cursor?: string | null;
+  meta?: Record<string, unknown> | null;
+}): Promise<void> {
+  const existing = await getSyncState(input.name);
+  const { error } = await getClient()
+    .from("sync_state")
+    .upsert(
+      {
+        name: input.name,
+        cursor: input.cursor === undefined ? (existing?.cursor ?? null) : input.cursor,
+        meta:
+          input.meta === undefined
+            ? (existing?.meta ?? null)
+            : { ...(existing?.meta ?? {}), ...input.meta },
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "name" }
+    );
+
+  if (error) {
+    throwSupabase(error, "upsertSyncState");
+  }
+}
+
+export async function upsertSyncError(input: {
+  syncName: string;
+  sessionId: string;
+  error: string;
+}): Promise<void> {
+  const now = new Date().toISOString();
+  const { error } = await getClient().from("sync_errors").upsert(
+    {
+      sync_name: input.syncName,
+      session_id: input.sessionId,
+      error: input.error.slice(0, 4000),
+      updated_at: now,
+      resolved_at: null,
+    },
+    { onConflict: "sync_name,session_id" }
+  );
+
+  if (error) {
+    throwSupabase(error, "upsertSyncError");
+  }
+}
+
+export async function resolveSyncError(syncName: string, sessionId: string): Promise<void> {
+  const now = new Date().toISOString();
+  const { error } = await getClient()
+    .from("sync_errors")
+    .update({ resolved_at: now, updated_at: now })
+    .eq("sync_name", syncName)
+    .eq("session_id", sessionId)
+    .is("resolved_at", null);
+
+  if (error) {
+    throwSupabase(error, "resolveSyncError");
+  }
+}
+
+export async function countOpenSyncErrors(syncName: string): Promise<number> {
+  const { count, error } = await getClient()
+    .from("sync_errors")
+    .select("id", { count: "exact", head: true })
+    .eq("sync_name", syncName)
+    .is("resolved_at", null);
+
+  if (error) {
+    throwSupabase(error, "countOpenSyncErrors");
+  }
+
+  return count ?? 0;
+}
+
+export async function listOpenSyncErrorSessionIds(
+  syncName: string,
+  limit = 100
+): Promise<string[]> {
+  const { data, error } = await getClient()
+    .from("sync_errors")
+    .select("session_id")
+    .eq("sync_name", syncName)
+    .is("resolved_at", null)
+    .order("updated_at", { ascending: true })
+    .limit(limit);
+
+  if (error) {
+    throwSupabase(error, "listOpenSyncErrorSessionIds");
+  }
+
+  return (data ?? []).map((row) => String((row as { session_id: string }).session_id));
+}
+
+export async function listRetellSessionsUpdatedAfter(
+  cursorIso: string | null,
+  limit = 100
+): Promise<RetellSessionRow[]> {
+  let query = getClient()
+    .from("retell_sessions")
+    .select("*")
+    .order("updated_at", { ascending: true })
+    .order("session_id", { ascending: true })
+    .limit(limit);
+
+  if (cursorIso) {
+    query = query.gt("updated_at", cursorIso);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    throwSupabase(error, "listRetellSessionsUpdatedAfter");
+  }
+
+  return (data as RetellSessionRow[]) ?? [];
+}
+
+export async function listRetellSessionsTouchedSince(
+  sinceIso: string,
+  offset: number,
+  limit: number
+): Promise<RetellSessionRow[]> {
+  const { data, error } = await getClient()
+    .from("retell_sessions")
+    .select("*")
+    .or(`created_at.gte.${sinceIso},updated_at.gte.${sinceIso}`)
+    .order("updated_at", { ascending: true })
+    .order("session_id", { ascending: true })
+    .range(offset, offset + limit - 1);
+
+  if (error) {
+    throwSupabase(error, "listRetellSessionsTouchedSince");
+  }
+
+  return (data as RetellSessionRow[]) ?? [];
+}
+
+export async function countRetellSessionsTouchedSince(sinceIso: string): Promise<number> {
+  const { count, error } = await getClient()
+    .from("retell_sessions")
+    .select("session_id", { count: "exact", head: true })
+    .or(`created_at.gte.${sinceIso},updated_at.gte.${sinceIso}`);
+
+  if (error) {
+    throwSupabase(error, "countRetellSessionsTouchedSince");
+  }
+
+  return count ?? 0;
+}
+
+export async function listRetellSessionIdsTouchedSince(sinceIso: string): Promise<string[]> {
+  const ids: string[] = [];
+  const pageSize = 1000;
+  let offset = 0;
+
+  for (;;) {
+    const { data, error } = await getClient()
+      .from("retell_sessions")
+      .select("session_id")
+      .or(`created_at.gte.${sinceIso},updated_at.gte.${sinceIso}`)
+      .order("session_id", { ascending: true })
+      .range(offset, offset + pageSize - 1);
+
+    if (error) {
+      throwSupabase(error, "listRetellSessionIdsTouchedSince");
+    }
+
+    const rows = (data ?? []) as Array<{ session_id: string }>;
+    for (const row of rows) {
+      ids.push(row.session_id);
+    }
+    if (rows.length < pageSize) {
+      break;
+    }
+    offset += pageSize;
+  }
+
+  return ids;
+}
+
+export async function getRetellSessionsByIds(sessionIds: string[]): Promise<RetellSessionRow[]> {
+  if (sessionIds.length === 0) {
+    return [];
+  }
+
+  const { data, error } = await getClient()
+    .from("retell_sessions")
+    .select("*")
+    .in("session_id", sessionIds);
+
+  if (error) {
+    throwSupabase(error, "getRetellSessionsByIds");
+  }
+
+  return (data as RetellSessionRow[]) ?? [];
+}
+
+export async function getRetellSessionTimestampBounds(): Promise<{
+  latestUpdatedAt: string | null;
+  latestCreatedAt: string | null;
+  oldestUpdatedAt: string | null;
+}> {
+  const client = getClient();
+  const [latestUpdated, latestCreated, oldestUpdated] = await Promise.all([
+    client
+      .from("retell_sessions")
+      .select("updated_at")
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    client
+      .from("retell_sessions")
+      .select("created_at")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    client
+      .from("retell_sessions")
+      .select("updated_at")
+      .order("updated_at", { ascending: true })
+      .limit(1)
+      .maybeSingle(),
+  ]);
+
+  if (latestUpdated.error) throwSupabase(latestUpdated.error, "latest updated_at");
+  if (latestCreated.error) throwSupabase(latestCreated.error, "latest created_at");
+  if (oldestUpdated.error) throwSupabase(oldestUpdated.error, "oldest updated_at");
+
+  return {
+    latestUpdatedAt: (latestUpdated.data?.updated_at as string | undefined) ?? null,
+    latestCreatedAt: (latestCreated.data?.created_at as string | undefined) ?? null,
+    oldestUpdatedAt: (oldestUpdated.data?.updated_at as string | undefined) ?? null,
+  };
 }
