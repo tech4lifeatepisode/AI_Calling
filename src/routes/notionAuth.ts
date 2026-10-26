@@ -1,11 +1,10 @@
 import type { Request, Response } from "express";
 import {
-  applyOAuthTokenToProcessEnv,
   buildNotionAuthorizeUrl,
   createOAuthState,
   exchangeNotionAuthorizationCode,
   getNotionConnectionStatus,
-  rememberOAuthToken,
+  persistNotionOAuthTokens,
   verifyOAuthState,
 } from "../services/notionAuth.js";
 import { getNotionDatabaseInfo, resetNotionDatabaseCache } from "../services/notion.js";
@@ -72,7 +71,7 @@ export async function notionHomeHandler(_req: Request, res: Response): Promise<v
               : ""
         }
         <p><a class="button" href="/auth/notion">Connect to Notion</a></p>
-        <p>After connecting, copy the tokens into Render env vars so they survive redeploys.</p>
+        <p>After connecting, tokens are saved in Supabase <code>sync_state</code> and survive redeploys. Optionally copy them into Render env vars as a backup.</p>
       `
     )
   );
@@ -125,8 +124,7 @@ export async function notionCallbackHandler(req: Request, res: Response): Promis
 
   try {
     const token = await exchangeNotionAuthorizationCode(code);
-    rememberOAuthToken(token);
-    applyOAuthTokenToProcessEnv(token);
+    const persistedToSupabase = await persistNotionOAuthTokens(token);
     resetNotionDatabaseCache();
 
     logger.info("Notion OAuth connected", {
@@ -140,13 +138,18 @@ export async function notionCallbackHandler(req: Request, res: Response): Promis
         "Notion Connected",
         `
           <p class="ok">Connected to <strong>${escapeHtml(token.workspace_name ?? token.workspace_id)}</strong>.</p>
-          <p>Sync is active for this running instance. To keep it working after redeploys, add these in Render:</p>
+          ${
+            persistedToSupabase
+              ? `<p class="ok">Tokens were saved to Supabase (<code>sync_state.notion_oauth</code>). Notion sync should keep working after Render redeploys and restarts.</p>`
+              : `<p class="warn">Could not save tokens to Supabase. Run migration <code>20261023_notion_sync_state.sql</code>, then connect again.</p>`
+          }
+          <p>Optional backup — add these in Render if you want env vars to match:</p>
           <pre>NOTION_API_KEY=${escapeHtml(token.access_token)}${
             token.refresh_token
               ? `\nNOTION_REFRESH_TOKEN=${escapeHtml(token.refresh_token)}`
               : ""
           }</pre>
-          <p>Also ensure <code>NOTION_CLIENT_ID</code> and <code>NOTION_CLIENT_SECRET</code> stay set for token refresh.</p>
+          <p>Keep <code>NOTION_CLIENT_ID</code> and <code>NOTION_CLIENT_SECRET</code> set so expired access tokens can refresh automatically.</p>
           <p><a class="button" href="/notion/status">Check sync status</a></p>
         `
       )

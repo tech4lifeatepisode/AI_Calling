@@ -299,6 +299,8 @@ Also required by the app process, and copied onto the cron job from the web serv
 
 On the **Supabase retell_sessions** database, open **⋯ → Connections** and confirm the integration that owns `NOTION_API_KEY` is connected. A token that is valid but not shared with that database cannot query or create pages.
 
+**OAuth (Option 1):** After visiting `/auth/notion`, the app saves the access and refresh tokens in Supabase `sync_state` (`notion_oauth`). That survives Render redeploys even if you do not paste tokens into Render immediately. Keep `NOTION_CLIENT_ID` and `NOTION_CLIENT_SECRET` on Render so the app can refresh expired access tokens automatically. Re-authorize once after deploying a build that includes this persistence if sync was connected only in memory before.
+
 Run this once in the Supabase SQL editor before the first deploy of this sync:
 
 `supabase/migrations/20261023_notion_sync_state.sql`

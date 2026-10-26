@@ -1,22 +1,10 @@
 import type { RetellSessionRow } from "../types/supabase.js";
 import { getEnv } from "./env.js";
 import { logger } from "./logger.js";
-import {
-  applyOAuthTokenToProcessEnv,
-  refreshNotionAccessToken,
-  refreshStoredNotionTokenIfNeeded,
-  rememberOAuthToken,
-  tryRefreshNotionAccessToken,
-  verifyNotionAccessToken,
-} from "./notionAuth.js";
+import { getValidNotionAccessToken } from "./notionAuth.js";
 import { mapRowToNotionProperties } from "./notionMap.js";
 import { NOTION_SYNC_NAME } from "./notionCursor.js";
-import {
-  getSyncState,
-  resolveSyncError,
-  upsertSyncError,
-  upsertSyncState,
-} from "./supabase.js";
+import { resolveSyncError, upsertSyncError } from "./supabase.js";
 
 export { chunkRichTextForNotion, normalizeTranscriptForNotion } from "./notionMap.js";
 
@@ -24,7 +12,6 @@ const NOTION_BASE = "https://api.notion.com/v1";
 const NOTION_DATA_SOURCE_VERSION = "2025-09-03";
 const NOTION_RATE_LIMIT_MAX_ATTEMPTS = 6;
 const NOTION_REQUEST_GAP_MS = 350;
-const NOTION_OAUTH_STATE = "notion_oauth";
 
 let cachedDatabaseId: string | null = null;
 let cachedApiKey: { key: string; until: number } | null = null;
@@ -129,79 +116,21 @@ function retellPageParent(databaseId: string): Record<string, string> {
   return { type: "database_id", database_id: databaseId };
 }
 
-async function rememberRefreshedToken(accessToken: string, refreshToken: string | undefined): Promise<void> {
-  try {
-    await upsertSyncState({
-      name: NOTION_OAUTH_STATE,
-      meta: {
-        access_token: accessToken,
-        refresh_token: refreshToken ?? null,
-      },
-    });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    logger.warn("Could not persist rotated Notion OAuth token", { message });
-  }
-}
-
 async function getNotionApiKey(): Promise<string> {
   if (cachedApiKey && cachedApiKey.until > Date.now()) {
     return cachedApiKey.key;
   }
 
-  const candidates: string[] = [];
-  const envKey = await refreshStoredNotionTokenIfNeeded();
-  if (envKey) {
-    candidates.push(envKey);
+  const resolved = await getValidNotionAccessToken();
+  if (!resolved) {
+    cachedApiKey = null;
+    throw new Error(
+      "Notion token is invalid. Re-authorize at /auth/notion, or set NOTION_API_KEY to an internal integration secret."
+    );
   }
 
-  let storedRefresh: string | undefined;
-  try {
-    const stored = await getSyncState(NOTION_OAUTH_STATE);
-    const storedAccess =
-      typeof stored?.meta?.access_token === "string" ? stored.meta.access_token : undefined;
-    storedRefresh =
-      typeof stored?.meta?.refresh_token === "string" ? stored.meta.refresh_token : undefined;
-    if (storedAccess && !candidates.includes(storedAccess)) {
-      candidates.push(storedAccess);
-    }
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    logger.warn("Could not read stored Notion OAuth token", { message });
-  }
-
-  for (const candidate of candidates) {
-    const verification = await verifyNotionAccessToken(candidate);
-    if (verification.valid) {
-      cachedApiKey = { key: candidate, until: Date.now() + 10 * 60 * 1000 };
-      return candidate;
-    }
-  }
-
-  const refreshToken = storedRefresh ?? getEnv().NOTION_REFRESH_TOKEN;
-  if (refreshToken) {
-    try {
-      const refreshed = await refreshNotionAccessToken(refreshToken);
-      rememberOAuthToken(refreshed);
-      applyOAuthTokenToProcessEnv(refreshed);
-      await rememberRefreshedToken(refreshed.access_token, refreshed.refresh_token);
-      cachedApiKey = { key: refreshed.access_token, until: Date.now() + 10 * 60 * 1000 };
-      return refreshed.access_token;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      logger.warn("Notion token refresh failed", { message });
-    }
-  }
-
-  const refreshed = await tryRefreshNotionAccessToken();
-  if (refreshed) {
-    cachedApiKey = { key: refreshed, until: Date.now() + 10 * 60 * 1000 };
-    return refreshed;
-  }
-
-  throw new Error(
-    "Notion token is invalid. Re-authorize at /auth/notion and update NOTION_API_KEY and NOTION_REFRESH_TOKEN in Render, or set NOTION_API_KEY to an internal integration secret."
-  );
+  cachedApiKey = { key: resolved.accessToken, until: Date.now() + 10 * 60 * 1000 };
+  return resolved.accessToken;
 }
 
 async function getDatabaseTitle(
@@ -993,7 +922,7 @@ export async function getNotionDatabaseInfo(): Promise<{
 }> {
   const env = getEnv();
 
-  if (!env.NOTION_API_KEY && !(await refreshStoredNotionTokenIfNeeded())) {
+  if (!(await getValidNotionAccessToken())) {
     return { success: false, error: "Notion is not connected. Open /auth/notion to authorize." };
   }
 
